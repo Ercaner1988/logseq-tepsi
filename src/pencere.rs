@@ -10,7 +10,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEY
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetClassNameW, GetWindow,
     GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, SetForegroundWindow, ShowWindow, ASFW_ANY, GWL_EXSTYLE, GW_OWNER, SW_HIDE,
+    IsWindowVisible, PostMessageW, SetForegroundWindow, ShowWindow, ASFW_ANY, GWL_EXSTYLE,
+    GW_OWNER, SW_HIDE, WM_CLOSE,
 };
 
 /// Tepsi aracının gizlediği pencere (yoklama yok; yalnız hatırlama).
@@ -146,6 +147,15 @@ pub fn cikista_goster() {
         if let Some(h) = h {
             goster(h);
         }
+    }
+}
+
+/// Menüdeki Çıkış: Logseq'i de kapatır. Pencere gizliyse önce gösterilir (kapanmazsa kayıp
+/// kalmasın), sonra kapatma düğmesine basılmış gibi `WM_CLOSE` gönderilir.
+pub fn logseq_kapat() {
+    cikista_goster();
+    if let Some(h) = bul() {
+        unsafe { PostMessageW(h, WM_CLOSE, 0, 0) };
     }
 }
 

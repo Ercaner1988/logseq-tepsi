@@ -101,7 +101,7 @@ fn menu_ac(hwnd: HWND) {
             KIMLIK_GOSTER => pencere::menu_goster(),
             KIMLIK_GIZLE => pencere::menu_gizle(),
             KIMLIK_CIKIS => {
-                pencere::cikista_goster();
+                pencere::logseq_kapat();
                 simge_sil(hwnd);
                 PostQuitMessage(0);
             }
