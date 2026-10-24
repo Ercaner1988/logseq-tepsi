@@ -1,6 +1,7 @@
 //! Logseq penceresi üzerindeki Win32 işlemleri (yalnız pencere; Logseq'e API/ağ yok).
-//! Pencere değiştiren işlevler yalnız ileti döngüsü iş parçacığından çağrılır; salt
-//! okuma (`ana_pencereler`, `durum_ozeti`) başka iş parçacığından da güvenlidir.
+//! Pencere değiştiren işlevler ve `ana_pencereler` (Gizlenenler kümesini budar, ayar
+//! dosyasına yazar) yalnız ileti döngüsü iş parçacığından çağrılır. Sunucu iş parçacığı
+//! (`/durum`) yalnız `durum_ozeti`ni çağırır: o kümeyi ve ayarı DEĞİŞTİRMEZ, salt okur.
 
 use crate::gizlenen::Gizlenenler;
 use crate::mantik::{self, AcilisEylemi, Aday, KucultmeKarari, MenuEylemi, PencereDurumu, Toplu};
@@ -20,7 +21,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow,
     GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
     IsWindowVisible, PostMessageW, SetForegroundWindow, ShowWindow, ASFW_ANY, GWL_EXSTYLE,
-    GW_OWNER, SW_HIDE, WM_CLOSE,
+    GW_OWNER, SW_HIDE, SW_SHOW, WM_CLOSE,
 };
 
 /// Tepsi aracının gizlediği pencereler (yoklama yok; yalnız hatırlama).
@@ -118,24 +119,33 @@ pub fn durum(hwnd: HWND) -> PencereDurumu {
     }
 }
 
-/// Tüm Logseq ana pencereleri ve durumları. Bayat kimlikleri (kapanmış pencere, başka
-/// süreçte yeniden kullanılmış HWND) kümeden atar; Logseq yolunu ayara kaydeder.
-pub fn ana_pencereler() -> Vec<(isize, PencereDurumu)> {
-    let ana: Vec<(HWND, bool)> = tum_adaylar()
+/// Logseq ana pencereleri ve görünürlükleri; hiçbir şeyi değiştirmez (her iş parçacığında güvenli).
+fn ana_listesi() -> Vec<(HWND, bool)> {
+    tum_adaylar()
         .into_iter()
         .filter(|(_, a, _)| mantik::ana_pencere_mi(a))
         .map(|(h, _, g)| (h, g))
-        .collect();
-    kume().gecerlileri_tut(|k| {
-        let durum = ana
-            .iter()
-            .find(|(h, _)| *h as isize == k)
-            .map(|(_, g)| PencereDurumu {
-                gorunur: *g,
-                simge_durumunda: false,
-            });
-        mantik::kumede_kalmali_mi(durum)
-    });
+        .collect()
+}
+
+/// Küme kimliği hâlâ geçerli mi: pencere var ve gizli (kapanmış ya da başka süreçte yeniden
+/// kullanılmış HWND bayat sayılır).
+fn kumede_gecerli_mi(ana: &[(HWND, bool)], kimlik: isize) -> bool {
+    let durum = ana
+        .iter()
+        .find(|(h, _)| *h as isize == kimlik)
+        .map(|(_, g)| PencereDurumu {
+            gorunur: *g,
+            simge_durumunda: false,
+        });
+    mantik::kumede_kalmali_mi(durum)
+}
+
+/// Tüm Logseq ana pencereleri ve durumları. Bayat kimlikleri kümeden atar; Logseq yolunu
+/// ayara kaydeder. Küme ve ayar yazar: yalnız ileti döngüsü iş parçacığında çağrılır.
+pub fn ana_pencereler() -> Vec<(isize, PencereDurumu)> {
+    let ana = ana_listesi();
+    kume().gecerlileri_tut(|k| kumede_gecerli_mi(&ana, k));
     if let Some((h, _)) = ana.first() {
         yolu_hatirla(*h);
     }
@@ -148,13 +158,28 @@ fn ayar_dosyasi() -> Option<std::path::PathBuf> {
     Some(gunluk::dizin()?.join("logseq-yolu.txt"))
 }
 
-/// Çalışan Logseq'in yolu değiştiyse ayar dosyasına yazar (sonraki başlatma için).
+/// Dizinde `Update.exe` var mı (Squirrel kök dizini göstergesi).
+fn update_exe_var(kok: &str) -> bool {
+    Path::new(kok).join("Update.exe").is_file()
+}
+
+/// Çalışan Logseq'in yolu değiştiyse ayar dosyasına yazar (sonraki başlatma için). Sürümü
+/// bilinen en yüksek kurulumdan düşük olan yol (örn. HKLM'de 2.0.2 varken eski Squirrel
+/// 0.10.15) yazılmaz; değerlendirilen son yol her durumda hatırlanır (kayıt defteri her
+/// yoklamada taranmasın).
 fn yolu_hatirla(hwnd: HWND) {
     let Some(yol) = pencere_surec_yolu(hwnd) else {
         return;
     };
     let mut son = HATIRLANAN_YOL.lock().unwrap_or_else(|e| e.into_inner());
     if son.eq_ignore_ascii_case(&yol) {
+        return;
+    }
+    if !yollar::hatirlanmali_mi(&yol, &kayit::uninstall_adaylari(), update_exe_var) {
+        gunluk::yaz(&format!(
+            "Logseq yolu kaydedilmedi (daha yüksek sürümlü kurulum var): {yol}"
+        ));
+        *son = yol;
         return;
     }
     if let Some(dosya) = ayar_dosyasi() {
@@ -170,14 +195,17 @@ fn yolu_hatirla(hwnd: HWND) {
 }
 
 /// Başlatılacak/simgesi alınacak `Logseq.exe` yolu: çalışan süreç, ayar dosyası, kayıt
-/// defteri, sabit yollar sırasıyla; ilk var olan.
+/// defteri (sürümü en yüksek önce), sabit yollar sırasıyla; ilk var olan. Ayar dosyasındaki
+/// yol, daha yüksek sürümlü kurulum varken (eski sürümde kalmış olabilir) atlanır.
 pub fn logseq_yolu() -> Option<String> {
     let calisan = bul().and_then(pencere_surec_yolu);
+    let kayit = kayit::uninstall_adaylari();
     let ayar = ayar_dosyasi()
         .and_then(|d| std::fs::read_to_string(d).ok())
-        .and_then(|i| yollar::ayar_yolu(&i));
+        .and_then(|i| yollar::ayar_yolu(&i))
+        .filter(|y| yollar::hatirlanmali_mi(y, &kayit, update_exe_var));
     let sabit = yollar::sabit_yollar(std::env::var("LOCALAPPDATA").ok().as_deref());
-    yollar::adaylar(calisan, ayar, kayit::uninstall_adaylari(), sabit)
+    yollar::adaylar(calisan, ayar, kayit, sabit)
         .into_iter()
         .find(|y| Path::new(y).is_file())
 }
@@ -340,10 +368,30 @@ pub fn acilis_taramasi() {
     }
 }
 
-/// `GET /durum` için: (tepside gizli pencere sayısı, Logseq açık mı). Yalnız okur.
+/// `GET /durum` için (sunucu iş parçacığı): (tepside gizli pencere sayısı, Logseq açık mı).
+/// Salt okur: kümeyi budamaz, ayara yazmaz; bayat kimlikleri yalnız saymaz.
 pub fn durum_ozeti() -> (usize, bool) {
-    let p = ana_pencereler();
-    (kume().len(), !p.is_empty())
+    let ana = ana_listesi();
+    let gizli = kume().gecerli_sayisi(|k| kumede_gecerli_mi(&ana, k));
+    (gizli, !ana.is_empty())
+}
+
+/// Panik kancası (`gunluk::panik_kancasi_kur`): araç ölmeden önce tepsideki pencereler geri
+/// gelsin. Panik küme kilidini tutarken olabilir: kilit alınamazsa görünmez ana pencereler
+/// gösterilir. Kilit/küme dışında yalnız `ShowWindow` çağırır.
+pub fn panikte_goster() {
+    let kimlikler: Vec<isize> = match GIZLI.try_lock() {
+        Ok(k) => k.hepsi().to_vec(),
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner().hepsi().to_vec(),
+        Err(std::sync::TryLockError::WouldBlock) => ana_listesi()
+            .into_iter()
+            .filter(|(_, gorunur)| !gorunur)
+            .map(|(h, _)| h as isize)
+            .collect(),
+    };
+    for h in kimlikler {
+        unsafe { ShowWindow(h as HWND, SW_SHOW) };
+    }
 }
 
 /// Tepsi simgesinin menüsünde "Hepsini göster" öğesinin etkinliği için gizli sayısı.

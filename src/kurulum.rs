@@ -3,6 +3,7 @@
 //! Görev Zamanlayıcı kullanılmaz; yalnız kendi eklediği şeyleri siler.
 
 use crate::kayit;
+use crate::yollar::{kisayol_karari, KisayolKarari};
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
@@ -62,7 +63,7 @@ struct UnknownVtbl {
 #[repr(C)]
 struct ShellLinkVtbl {
     temel: UnknownVtbl,
-    get_path: Yontem,
+    get_path: unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut c_void, u32) -> Hr,
     get_id_list: Yontem,
     set_id_list: Yontem,
     get_description: Yontem,
@@ -87,7 +88,7 @@ struct PersistFileVtbl {
     temel: UnknownVtbl,
     get_class_id: Yontem,
     is_dirty: Yontem,
-    load: Yontem,
+    load: unsafe extern "system" fn(*mut c_void, *const u16, u32) -> Hr,
     save: unsafe extern "system" fn(*mut c_void, *const u16, i32) -> Hr,
     save_completed: Yontem,
     get_cur_file: Yontem,
@@ -169,6 +170,90 @@ fn kisayol_yaz(lnk: &str, exe: &str) -> Result<(), String> {
     }
 }
 
+/// `IShellLinkW::GetPath` bayrağı: ortam değişkenleri açılmamış ham yol.
+const SLGP_RAWPATH: u32 = 4;
+
+/// Var olan kısayolun gösterdiği hedef yol (okunamazsa hata).
+fn kisayol_hedefi(lnk: &str) -> Result<String, String> {
+    // SAFETY: COM çağrıları tek iş parçacığında; her arayüz işaretçisi Release edilir.
+    unsafe {
+        let hr = CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
+        if hr < 0 {
+            return Err(format!("CoInitializeEx hata {hr:#x}"));
+        }
+        let sonuc = (|| {
+            let mut ham: *mut c_void = null_mut();
+            let hr = CoCreateInstance(
+                &CLSID_SHELL_LINK,
+                null_mut(),
+                CLSCTX_INPROC_SERVER,
+                &IID_ISHELL_LINK_W,
+                &mut ham,
+            );
+            if hr < 0 || ham.is_null() {
+                return Err(format!("CoCreateInstance(ShellLink) hata {hr:#x}"));
+            }
+            let v = &*(*(ham as *mut Nesne<ShellLinkVtbl>)).vtbl;
+            let mut dosya_ham: *mut c_void = null_mut();
+            let mut hr = (v.temel.query_interface)(ham, &IID_IPERSIST_FILE, &mut dosya_ham);
+            let mut yol = String::new();
+            if hr >= 0 && !dosya_ham.is_null() {
+                let dosya = dosya_ham as *mut Nesne<PersistFileVtbl>;
+                hr = ((*(*dosya).vtbl).load)(dosya_ham, genis(lnk).as_ptr(), 0);
+                ((*(*dosya).vtbl).temel.release)(dosya_ham);
+                if hr >= 0 {
+                    let mut t = [0u16; 1024];
+                    hr = (v.get_path)(
+                        ham,
+                        t.as_mut_ptr(),
+                        t.len() as i32,
+                        null_mut(),
+                        SLGP_RAWPATH,
+                    );
+                    let n = t.iter().position(|&c| c == 0).unwrap_or(t.len());
+                    yol = String::from_utf16_lossy(&t[..n]);
+                }
+            }
+            (v.temel.release)(ham);
+            if hr < 0 {
+                Err(format!("kısayol okunamadı, hata {hr:#x}"))
+            } else {
+                Ok(yol)
+            }
+        })();
+        CoUninitialize();
+        sonuc
+    }
+}
+
+/// Başlangıç kısayolunu bu exe'ye göre kurar: yoksa oluşturur, başka exe'yi gösteriyorsa (ya da
+/// okunamıyorsa) yeniden yazar, aynıysa dokunmaz. Yapılanı düz metinle döndürür.
+fn kisayolu_duzenle(lnk: &str, exe: &str) -> Result<String, String> {
+    let var = std::path::Path::new(lnk).exists();
+    let hedef = if var {
+        kisayol_hedefi(lnk)
+    } else {
+        Ok(String::new())
+    };
+    match kisayol_karari(var, hedef.as_deref().ok(), exe) {
+        KisayolKarari::Dokunma => Ok("zaten var, bu exe'yi gösteriyor, dokunulmadı".into()),
+        KisayolKarari::Olustur => {
+            kisayol_yaz(lnk, exe)?;
+            Ok("oluşturuldu".into())
+        }
+        KisayolKarari::Yeniden => {
+            kisayol_yaz(lnk, exe)?;
+            Ok(match hedef {
+                Ok(eski) if !eski.is_empty() => format!(
+                    "başka bir exe'yi gösteriyordu ({eski}); bu exe'ye göre yeniden yazıldı"
+                ),
+                Ok(_) => "hedefi boştu; bu exe'ye göre yeniden yazıldı".into(),
+                Err(e) => format!("hedefi okunamadı ({e}); bu exe'ye göre yeniden yazıldı"),
+            })
+        }
+    }
+}
+
 fn exe_yolu() -> Result<String, String> {
     std::env::current_exe()
         .map(|p| p.display().to_string())
@@ -185,12 +270,10 @@ fn kur_icin() -> Result<(), String> {
     let exe = exe_yolu()?;
     println!("exe: {exe}");
     let lnk = kisayol_yolu()?;
-    if std::path::Path::new(&lnk).exists() {
-        println!("başlangıç kısayolu: {lnk}\n  zaten var, dokunulmadı");
-    } else {
-        kisayol_yaz(&lnk, &exe)?;
-        println!("başlangıç kısayolu: {lnk}\n  oluşturuldu");
-    }
+    println!(
+        "başlangıç kısayolu: {lnk}\n  {}",
+        kisayolu_duzenle(&lnk, &exe)?
+    );
     let degerler = sema_degerleri(&exe);
     let guncel = degerler
         .iter()
@@ -328,6 +411,46 @@ mod testler {
             println!("lnk: {}", lnk.display());
         }
         assert!(boyut > 100, "kisayol dosyasi cok kucuk: {boyut}");
+    }
+
+    /// `kur`un kısayol adımı: yoksa oluşturur, aynıysa dokunmaz, başka exe'yi gösteriyorsa ya da
+    /// bozuksa yeniden yazar ve bunu söyler. Yalnız geçici dizine yazar.
+    #[test]
+    fn kisayolu_duzenle_olustur_dokunma_yeniden() {
+        let dir = std::env::temp_dir().join(format!("logseq-tepsi-kd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lnk = dir.join("Logseq-tepsi.lnk");
+        let lnk_s = lnk.to_str().unwrap();
+        let (eski, yeni) = (
+            r"C:\Program Files\Eski\logseq-tepsi.exe",
+            r"C:\Program Files\Yeni\logseq-tepsi.exe",
+        );
+
+        assert_eq!(kisayolu_duzenle(lnk_s, eski).unwrap(), "oluşturuldu");
+        assert_eq!(kisayol_hedefi(lnk_s).unwrap(), eski);
+
+        let bayt = std::fs::read(&lnk).unwrap();
+        let ayni = kisayolu_duzenle(lnk_s, eski).unwrap();
+        assert!(ayni.contains("dokunulmadı"), "{ayni}");
+        assert_eq!(
+            std::fs::read(&lnk).unwrap(),
+            bayt,
+            "aynı exe: dosya değişmemeli"
+        );
+
+        let degisti = kisayolu_duzenle(lnk_s, yeni).unwrap();
+        assert!(
+            degisti.contains("yeniden yazıldı") && degisti.contains(eski),
+            "{degisti}"
+        );
+        assert_eq!(kisayol_hedefi(lnk_s).unwrap(), yeni);
+
+        std::fs::write(&lnk, b"bozuk").unwrap();
+        let bozuk = kisayolu_duzenle(lnk_s, yeni).unwrap();
+        assert!(bozuk.contains("yeniden yazıldı"), "{bozuk}");
+        assert_eq!(kisayol_hedefi(lnk_s).unwrap(), yeni);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -37,7 +37,20 @@ if (import.meta.main) {
     console.error("Kullanım: bun arac/sabitle.ts <preferences.json yolu>");
     process.exit(64);
   }
-  const s = sabitle(await readFile(yol, "utf8"));
+  let metin: string;
+  try {
+    metin = await readFile(yol, "utf8");
+  } catch (e) {
+    const kod = (e as NodeJS.ErrnoException).code;
+    console.error(
+      kod === "ENOENT"
+        ? `preferences.json bulunamadı: ${yol}
+Logseq bu bilgisayarda hiç açılmamış olabilir ya da yol yanlış.`
+        : `preferences.json okunamadı (${yol}): ${e instanceof Error ? e.message : String(e)}`,
+    );
+    process.exit(1);
+  }
+  const s = sabitle(metin);
   switch (s.durum) {
     case "eklendi": {
       await copyFile(yol, `${yol}.tepsi-yedek`);

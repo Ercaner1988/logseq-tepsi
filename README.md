@@ -11,7 +11,7 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 - Sağ tık menüsü: Göster, Hepsini göster, Tepsiye gizle, Çıkış, Tepsi aracını kapat. Çıkış tüm Logseq ana pencerelerini kapatır (gizliyse önce görünür yapılır, sonra `WM_CLOSE`); araç tepside kalır, simgeye tıklayınca Logseq yeniden açılır. "Tepsi aracını kapat" yalnız aracı kapatır, Logseq'e dokunmaz (gizliyse önce gösterir). Oturum kapanırken (`WM_ENDSESSION`) gizli pencere gösterilir.
 - Kapatma (X) düğmesine dokunmaz: Logseq kapanır, araç ve simge kalır.
 - Tek örnek: ikinci kopya hemen çıkar ama önce mevcut kopyaya "simgeyi yeniden ekle" iletisi yollar (simge, kanca ve açılış taraması tazelenir).
-- Logseq yolu sabit değil. Sıra: çalışan ana pencerenin süreç yolu, `%LOCALAPPDATA%\logseq-tepsi\logseq-yolu.txt` (son bilinen yol, araç kendisi yazar), kayıt defteri Uninstall girdileri (HKCU, HKLM, WOW6432Node; `InstallLocation`, `DisplayIcon`, `UninstallString`), son çare sabit yollar. İlk var olan kullanılır. Logseq ayrık süreç olarak başlatılır (`ELECTRON_RUN_AS_NODE` kaldırılır, stdio boş, DETACHED_PROCESS + yeni süreç grubu + izin varsa iş nesnesinden kopuk).
+- Logseq yolu sabit değil. Sıra: çalışan ana pencerenin süreç yolu, `%LOCALAPPDATA%\logseq-tepsi\logseq-yolu.txt` (son bilinen yol, araç kendisi yazar), kayıt defteri Uninstall girdileri (HKCU, HKLM, WOW6432Node; `InstallLocation`, `DisplayIcon`, `UninstallString`; `DisplayVersion`ı en yüksek olan önce, sayısal karşılaştırma: `0.10.15` < `2.0.2`), son çare sabit yollar. Sürümü bilinen en yüksek kurulumdan düşük bir yol (örn. 2.x varken eski Squirrel) ayara yazılmaz, ayardan da okunmaz. İlk var olan kullanılır. Logseq ayrık süreç olarak başlatılır (`ELECTRON_RUN_AS_NODE` kaldırılır, stdio boş, DETACHED_PROCESS + yeni süreç grubu + izin varsa iş nesnesinden kopuk).
 - Günlük: `%LOCALAPPDATA%\logseq-tepsi\gunluk.txt` (UTC, 64 KB'ta `gunluk.eski.txt`'ye döner; panik iletisi de buraya).
 - DPI: çalışma zamanında `PER_MONITOR_AWARE_V2` istenir (manifest yok).
 
@@ -26,7 +26,7 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 | `POST /goster` | 204; tepsideki tüm ana pencereleri gösterir, en son gizlenen öne gelir |
 | `OPTIONS` (ön uçuş) | izinli Origin ise 204 + `Access-Control-Allow-Origin: <aynı origin>`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: X-Logseq-Tepsi`, `Access-Control-Allow-Private-Network: true`; değilse 403 |
 
-Güvenlik: OPTIONS dışındaki her istek `X-Logseq-Tepsi: 1` taşımalı, yoksa 403. `Origin` varsa izin listesinde olmalı (`lsp://logseq.io`, `lsp://logseq.com`, `file://`, `null`; `cekirdek/src/uc.rs` `IZINLI_ORIGINLER`), değilse 403. `Host` varsa `127.0.0.1:47123` ya da `localhost:47123` olmalı (DNS yeniden bağlama savunması; sözleşmeye ek). İzinli yanıtlarda `Access-Control-Allow-Origin` yankılanır. Bilinmeyen yol 404, yanlış metot 405, bozuk istek 400, büyük istek 431, zaman aşımı 408. Pencere işleri HTTP iş parçacığında yapılmaz: ileti penceresine `PostMessageW` ile devredilir.
+Güvenlik: OPTIONS dışındaki her istek `X-Logseq-Tepsi: 1` taşımalı, yoksa 403. `Origin` varsa izin listesinde olmalı (yalnız `lsp://logseq.io`, `lsp://logseq.com`; `cekirdek/src/uc.rs` `IZINLI_ORIGINLER`; `null` ve `file://` bilerek yok: sandbox iframe ve yerel HTML dosyaları da onu gönderir). Origin göndermeyen yerel süreç (curl gibi) özel başlıkla geçer, değilse 403. `Host` varsa `127.0.0.1:47123` ya da `localhost:47123` olmalı (DNS yeniden bağlama savunması; sözleşmeye ek). İzinli yanıtlarda `Access-Control-Allow-Origin` yankılanır. Bilinmeyen yol 404, yanlış metot 405, bozuk istek 400, büyük istek 431, zaman aşımı 408. Pencere işleri HTTP iş parçacığında yapılmaz: ileti penceresine `PostMessageW` ile devredilir.
 
 ## Kurulum
 
@@ -35,7 +35,7 @@ cargo install --path .
 logseq-tepsi kur
 ```
 
-`kur` (idempotent, ne yaptığını yazar): `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Logseq-tepsi.lnk` başlangıç kısayolu yoksa oluşturur (varsa dokunmaz); `HKCU\Software\Classes\logseq-tepsi` URL şemasını yazar (`"<exe>" --url "%1"`). `--url` argümanı yok sayılır: yalnız aracı başlatır (çalışıyorsa mevcut kopyaya "simgeyi yeniden ekle" gider). Görev Zamanlayıcı kullanılmaz.
+`kur` (idempotent, ne yaptığını yazar): `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Logseq-tepsi.lnk` başlangıç kısayolu yoksa oluşturur, aynı exe'yi gösteriyorsa dokunmaz, başka exe'yi gösteriyorsa (ya da bozuksa) yeniden yazar ve bunu söyler; `HKCU\Software\Classes\logseq-tepsi` URL şemasını yazar (`"<exe>" --url "%1"`). `--url` argümanı yok sayılır: yalnız aracı başlatır (çalışıyorsa mevcut kopyaya "simgeyi yeniden ekle" gider). Görev Zamanlayıcı kullanılmaz.
 
 `logseq-tepsi kaldir`: yalnız kendi eklediği kısayolu ve şema anahtarını siler.
 

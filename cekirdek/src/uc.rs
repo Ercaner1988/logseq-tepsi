@@ -10,8 +10,10 @@ pub const ISTEK_TAVANI: usize = 8 * 1024;
 pub const OKUMA_ZAMAN_ASIMI_MS: u64 = 2_000;
 /// Yetki başlığı (ad büyük/küçük harfe duyarsız; değer tam `1`).
 pub const YETKI_BASLIGI: &str = "X-Logseq-Tepsi";
-/// İzinli `Origin` değerleri (tek yerde tutulur).
-pub const IZINLI_ORIGINLER: &[&str] = &["lsp://logseq.io", "lsp://logseq.com", "file://", "null"];
+/// İzinli `Origin` değerleri (tek yerde tutulur). Eklentinin gerçek Origin'i `lsp://logseq.io`
+/// (asar ölçümü). `null` ve `file://` bilerek YOK: sandbox'lı iframe, `data:` sayfası ve yerel
+/// HTML dosyası da bu Origin'leri gönderir; izin vermek onlara kapıyı açar.
+pub const IZINLI_ORIGINLER: &[&str] = &["lsp://logseq.io", "lsp://logseq.com"];
 
 /// Ayrıştırılmış istek (gövde yok sayılır). Başlık adları küçük harfe çevrilir.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -437,6 +439,9 @@ mod testler {
             "lsp://logseq.io.evil",
             "",
             "file:///x",
+            "file://",
+            "null",
+            "NULL",
         ] {
             let r = sor(&istek("POST", "/gizle", &[YETKI, ("Origin", o)]));
             assert_eq!(r.kod, 403, "origin {o:?}");
@@ -533,6 +538,33 @@ mod testler {
     }
 
     #[test]
+    fn null_ve_file_origin_hem_on_ucus_hem_post_403() {
+        for o in ["null", "file://", "file:///C:/x.html", "Null"] {
+            for metot in ["OPTIONS", "POST", "GET"] {
+                let r = sor(&istek(metot, "/gizle", &[YETKI, ("Origin", o)]));
+                assert_eq!(r.kod, 403, "{metot} origin {o:?}");
+                assert_eq!(r.is, Is::Yok);
+                assert_eq!(baslik(&r, "Access-Control-Allow-Origin"), None);
+                assert_eq!(baslik(&r, "Access-Control-Allow-Methods"), None);
+            }
+        }
+        assert!(!IZINLI_ORIGINLER
+            .iter()
+            .any(|o| *o == "null" || o.starts_with("file")));
+    }
+
+    #[test]
+    fn origin_siz_istek_ozel_baslik_olmadan_403_basliklaysa_gecer() {
+        assert_eq!(sor(&istek("POST", "/gizle", &[])).kod, 403);
+        assert_eq!(
+            sor(&istek("POST", "/gizle", &[("X-Logseq-Tepsi", "0")])).kod,
+            403
+        );
+        let r = sor(&istek("POST", "/gizle", &[YETKI]));
+        assert_eq!((r.kod, r.is), (204, Is::Gizle));
+    }
+
+    #[test]
     fn host_basligi_yerel_degilse_403() {
         let r = sor(&istek(
             "GET",
@@ -597,13 +629,17 @@ mod testler {
 
     #[test]
     fn yanit_200_baytlari() {
-        let y = sor(&istek("GET", "/durum", &[YETKI, ("Origin", "null")]));
+        let y = sor(&istek(
+            "GET",
+            "/durum",
+            &[YETKI, ("Origin", "lsp://logseq.io")],
+        ));
         let s = String::from_utf8(yanit_baytlari(&y)).unwrap();
         assert!(s.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(s.contains("Content-Type: text/plain; charset=utf-8\r\n"));
         assert!(s.contains(&format!("Content-Length: {}\r\n", y.govde.len())));
         assert!(s.contains("Connection: close\r\n"));
-        assert!(s.contains("Access-Control-Allow-Origin: null\r\n"));
+        assert!(s.contains("Access-Control-Allow-Origin: lsp://logseq.io\r\n"));
         assert!(s.ends_with("\r\n\r\nlogseq-tepsi 9.9.9\ngizli=2\nlogseq=acik\n"));
     }
 

@@ -11,7 +11,7 @@ mod uc_sunucu;
 
 use logseq_tepsi_cekirdek::komut::Komut;
 // Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
-use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, uc, yollar};
+use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, onbellek, uc, yollar};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,7 +21,7 @@ fn main() {
     }
     match komut {
         Komut::Calistir => {
-            gunluk::panik_kancasi_kur();
+            gunluk::panik_kancasi_kur(pencere::panikte_goster);
             tepsi::calistir();
         }
         Komut::Kur => std::process::exit(kurulum::kur()),

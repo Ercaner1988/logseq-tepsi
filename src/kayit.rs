@@ -1,7 +1,7 @@
 //! Kayıt defteri okuma/yazma yardımcıları (Win32). Ayrıştırma mantığı `yollar`/`kurulum`
 //! modüllerinde saf kodda; burası yalnız ince bir kabuk.
 
-use crate::yollar::KayitDegerleri;
+use crate::yollar::{KayitAdayi, KayitDegerleri};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
@@ -84,8 +84,9 @@ fn alt_anahtarlar(kok: HKEY, yol: &str) -> Vec<String> {
 }
 
 /// HKCU, HKLM ve HKLM(WOW6432Node) Uninstall anahtarlarındaki Logseq girdilerinin
-/// `Logseq.exe` yol adayları (kayıt sırasıyla, ayrıştırma `yollar::kayit_adaylari`).
-pub fn uninstall_adaylari() -> Vec<String> {
+/// `Logseq.exe` yol adayları, girdinin `DisplayVersion` değeriyle (tarama sırasıyla; sürüme göre
+/// sıralama ve ayrıştırma saf kodda: `yollar::adaylar`, `yollar::surumlu_kayit_adaylari`).
+pub fn uninstall_adaylari() -> Vec<KayitAdayi> {
     let mut sonuc = Vec::new();
     for (kok, yol) in [
         (HKEY_CURRENT_USER, UNINSTALL),
@@ -103,9 +104,10 @@ pub fn uninstall_adaylari() -> Vec<String> {
                 kurulum_konumu: deger_oku(kok, &alt, "InstallLocation"),
                 gorunen_simge: deger_oku(kok, &alt, "DisplayIcon"),
                 kaldirma_komutu: deger_oku(kok, &alt, "UninstallString"),
+                gorunen_surum: deger_oku(kok, &alt, "DisplayVersion"),
                 anahtar_adi: anahtar,
             };
-            sonuc.extend(crate::yollar::kayit_adaylari(&d));
+            sonuc.extend(crate::yollar::surumlu_kayit_adaylari(&d));
         }
     }
     sonuc
@@ -194,7 +196,8 @@ mod testler {
     #[test]
     fn uninstall_taramasi_cokmez() {
         // Makineye bağlı sonuç; yalnız çalışır ve yalnız Logseq girdilerinden aday üretir.
-        for y in uninstall_adaylari() {
+        for k in uninstall_adaylari() {
+            let y = k.yol;
             assert!(y.to_ascii_lowercase().ends_with("logseq.exe"), "{y}");
         }
     }

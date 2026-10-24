@@ -69,14 +69,29 @@ pub fn yaz(ileti: &str) {
     }
 }
 
-/// Panik iletisini günlüğe yazar (`panic = "abort"` olduğundan süreç hemen ardından ölür).
-pub fn panik_kancasi_kur() {
-    std::panic::set_hook(Box::new(|bilgi| yaz(&format!("PANIK: {bilgi}"))));
+/// Panik kancasının gövdesi: iletiyi `yaz` ile günlüğe yazar, ardından `geri_cagri`yı çağırır
+/// (kök crate pencereleri geri getirir; çekirdek Win32'ye bağlanmaz).
+pub fn panik_kancasi(
+    yaz: fn(&str),
+    geri_cagri: fn(),
+) -> Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static> {
+    Box::new(move |bilgi| {
+        yaz(&format!("PANIK: {bilgi}"));
+        geri_cagri();
+    })
+}
+
+/// Panik iletisini günlüğe yazar ve `geri_cagri`yı çağırır (`panic = "abort"` olduğundan süreç
+/// hemen ardından ölür; tepsideki pencereler kayıp kalmasın diye geri çağrı onları gösterir).
+pub fn panik_kancasi_kur(geri_cagri: fn()) {
+    std::panic::set_hook(panik_kancasi(yaz, geri_cagri));
 }
 
 #[cfg(test)]
 mod testler {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     #[test]
     fn zaman_bicimi_bilinen_degerler() {
@@ -100,5 +115,39 @@ mod testler {
         assert!(!donmeli_mi(BOYUT_SINIRI - 1));
         assert!(donmeli_mi(BOYUT_SINIRI));
         assert!(donmeli_mi(BOYUT_SINIRI + 1));
+    }
+
+    static YAZILAN: AtomicUsize = AtomicUsize::new(0);
+    static GERI_CAGRI: AtomicUsize = AtomicUsize::new(0);
+    static SON_SIRA: AtomicUsize = AtomicUsize::new(0);
+    static KANCA_KILIDI: Mutex<()> = Mutex::new(());
+
+    fn sahte_yaz(ileti: &str) {
+        assert!(ileti.starts_with("PANIK: "), "{ileti}");
+        assert!(ileti.contains("deneme paniği"), "{ileti}");
+        YAZILAN.store(
+            SON_SIRA.fetch_add(1, Ordering::SeqCst) + 1,
+            Ordering::SeqCst,
+        );
+    }
+
+    fn sahte_geri_cagri() {
+        GERI_CAGRI.store(
+            SON_SIRA.fetch_add(1, Ordering::SeqCst) + 1,
+            Ordering::SeqCst,
+        );
+    }
+
+    /// Küresel panik kancasını geçici değiştirir (gerçek günlüğe yazmaz); kanca sınaması tek koşar.
+    #[test]
+    fn panikte_gunluk_yazilir_sonra_geri_cagri_calisir() {
+        let _k = KANCA_KILIDI.lock().unwrap_or_else(|e| e.into_inner());
+        let eski = std::panic::take_hook();
+        std::panic::set_hook(panik_kancasi(sahte_yaz, sahte_geri_cagri));
+        let sonuc = std::panic::catch_unwind(|| panic!("deneme paniği"));
+        std::panic::set_hook(eski);
+        assert!(sonuc.is_err());
+        assert_eq!(YAZILAN.load(Ordering::SeqCst), 1, "günlük önce");
+        assert_eq!(GERI_CAGRI.load(Ordering::SeqCst), 2, "geri çağrı sonra");
     }
 }
