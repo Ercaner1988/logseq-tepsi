@@ -1,23 +1,38 @@
-//! Logseq penceresi üzerindeki Win32 işlemleri (yalnız pencere; ağ/dosya yok).
+//! Logseq penceresi üzerindeki Win32 işlemleri (yalnız pencere; Logseq'e API/ağ yok).
+//! Pencere değiştiren işlevler yalnız ileti döngüsü iş parçacığından çağrılır; salt
+//! okuma (`ana_pencereler`, `durum_ozeti`) başka iş parçacığından da güvenlidir.
 
-use crate::mantik::{self, Aday, Eylem, PencereDurumu};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use crate::gizlenen::Gizlenenler;
+use crate::mantik::{self, AcilisEylemi, Aday, KucultmeKarari, MenuEylemi, PencereDurumu, Toplu};
+use crate::{gunluk, kayit, yollar};
+use std::os::windows::process::CommandExt;
+use std::path::Path;
+use std::process::Stdio;
+use std::sync::{Mutex, MutexGuard};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_MENU,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetClassNameW, GetWindow,
-    GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow,
+    GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
     IsWindowVisible, PostMessageW, SetForegroundWindow, ShowWindow, ASFW_ANY, GWL_EXSTYLE,
     GW_OWNER, SW_HIDE, WM_CLOSE,
 };
 
-/// Tepsi aracının gizlediği pencere (yoklama yok; yalnız hatırlama).
-static GIZLI: AtomicIsize = AtomicIsize::new(0);
+/// Tepsi aracının gizlediği pencereler (yoklama yok; yalnız hatırlama).
+static GIZLI: Mutex<Gizlenenler> = Mutex::new(Gizlenenler::yeni());
+/// Ayar dosyasına en son yazılan Logseq yolu (gereksiz yazmayı önler).
+static HATIRLANAN_YOL: Mutex<String> = Mutex::new(String::new());
 
-fn surec_adi(pid: u32) -> Option<String> {
+fn kume() -> MutexGuard<'static, Gizlenenler> {
+    GIZLI.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn surec_yolu(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {
@@ -30,25 +45,37 @@ fn surec_adi(pid: u32) -> Option<String> {
         if tamam == 0 {
             return None;
         }
-        let yol = String::from_utf16_lossy(&tampon[..uzunluk as usize]);
-        yol.rsplit('\\').next().map(str::to_owned)
+        Some(String::from_utf16_lossy(&tampon[..uzunluk as usize]))
     }
 }
 
-/// Pencerenin seçim özelliklerini okur.
+fn pencere_surec_yolu(hwnd: HWND) -> Option<String> {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+    surec_yolu(pid)
+}
+
+/// Pencerenin seçim özelliklerini okur. Ucuz okumalar (sınıf, sahip, başlık, stil) önce,
+/// pahalı süreç açma en sonda; sınıf uymuyorsa süreç hiç açılmaz.
 pub fn aday_oku(hwnd: HWND) -> Option<Aday> {
     unsafe {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        let surec_adi = surec_adi(pid)?;
         let mut sinif = [0u16; 256];
         let n = GetClassNameW(hwnd, sinif.as_mut_ptr(), sinif.len() as i32);
+        let sinif = String::from_utf16_lossy(&sinif[..n.max(0) as usize]);
+        if !mantik::sinif_uygun_mu(&sinif) {
+            return None;
+        }
+        let sahipli = !GetWindow(hwnd, GW_OWNER).is_null();
+        let baslik_var = GetWindowTextLengthW(hwnd) > 0;
+        let ex_stil = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let yol = pencere_surec_yolu(hwnd)?;
+        let surec_adi = yol.rsplit('\\').next().map(str::to_owned)?;
         Some(Aday {
             surec_adi,
-            sinif: String::from_utf16_lossy(&sinif[..n.max(0) as usize]),
-            sahipli: !GetWindow(hwnd, GW_OWNER).is_null(),
-            baslik_var: GetWindowTextLengthW(hwnd) > 0,
-            ex_stil: GetWindowLongW(hwnd, GWL_EXSTYLE) as u32,
+            sinif,
+            sahipli,
+            baslik_var,
+            ex_stil,
         })
     }
 }
@@ -63,17 +90,21 @@ unsafe extern "system" fn say(hwnd: HWND, lparam: LPARAM) -> BOOL {
     1
 }
 
-/// Logseq ana penceresini bulur (görünür ya da gizlenmiş).
-pub fn bul() -> Option<HWND> {
-    let gizli = GIZLI.load(Ordering::Relaxed) as HWND;
-    if !gizli.is_null() && unsafe { IsWindow(gizli) } != 0 {
-        return Some(gizli);
-    }
+/// Sınıfı Logseq'e uyan tüm üst düzey pencereler (Z sırasıyla, üstteki önce) ve görünürlükleri.
+fn tum_adaylar() -> Vec<(HWND, Aday, bool)> {
     let mut hepsi: Vec<HWND> = Vec::new();
     unsafe { EnumWindows(Some(say), &mut hepsi as *mut _ as LPARAM) };
-    let (pencereler, adaylar): (Vec<HWND>, Vec<(Aday, bool)>) = hepsi
+    hepsi
         .into_iter()
-        .filter_map(|h| Some((h, (aday_oku(h)?, unsafe { IsWindowVisible(h) } != 0))))
+        .filter_map(|h| Some((h, aday_oku(h)?, unsafe { IsWindowVisible(h) } != 0)))
+        .collect()
+}
+
+/// Logseq ana penceresini bulur (görünür ya da gizlenmiş); canlı sınama komutları için.
+pub fn bul() -> Option<HWND> {
+    let (pencereler, adaylar): (Vec<HWND>, Vec<(Aday, bool)>) = tum_adaylar()
+        .into_iter()
+        .map(|(h, a, g)| (h, (a, g)))
         .unzip();
     mantik::sec(&adaylar).map(|i| pencereler[i])
 }
@@ -87,81 +118,235 @@ pub fn durum(hwnd: HWND) -> PencereDurumu {
     }
 }
 
+/// Tüm Logseq ana pencereleri ve durumları. Bayat kimlikleri (kapanmış pencere, başka
+/// süreçte yeniden kullanılmış HWND) kümeden atar; Logseq yolunu ayara kaydeder.
+pub fn ana_pencereler() -> Vec<(isize, PencereDurumu)> {
+    let ana: Vec<(HWND, bool)> = tum_adaylar()
+        .into_iter()
+        .filter(|(_, a, _)| mantik::ana_pencere_mi(a))
+        .map(|(h, _, g)| (h, g))
+        .collect();
+    kume().gecerlileri_tut(|k| {
+        let durum = ana
+            .iter()
+            .find(|(h, _)| *h as isize == k)
+            .map(|(_, g)| PencereDurumu {
+                gorunur: *g,
+                simge_durumunda: false,
+            });
+        mantik::kumede_kalmali_mi(durum)
+    });
+    if let Some((h, _)) = ana.first() {
+        yolu_hatirla(*h);
+    }
+    ana.into_iter()
+        .map(|(h, _)| (h as isize, durum(h)))
+        .collect()
+}
+
+fn ayar_dosyasi() -> Option<std::path::PathBuf> {
+    Some(gunluk::dizin()?.join("logseq-yolu.txt"))
+}
+
+/// Çalışan Logseq'in yolu değiştiyse ayar dosyasına yazar (sonraki başlatma için).
+fn yolu_hatirla(hwnd: HWND) {
+    let Some(yol) = pencere_surec_yolu(hwnd) else {
+        return;
+    };
+    let mut son = HATIRLANAN_YOL.lock().unwrap_or_else(|e| e.into_inner());
+    if son.eq_ignore_ascii_case(&yol) {
+        return;
+    }
+    if let Some(dosya) = ayar_dosyasi() {
+        if let Some(d) = dosya.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        match std::fs::write(&dosya, format!("{yol}\r\n")) {
+            Ok(()) => gunluk::yaz(&format!("Logseq yolu kaydedildi: {yol}")),
+            Err(e) => gunluk::yaz(&format!("Logseq yolu kaydedilemedi: {e}")),
+        }
+    }
+    *son = yol;
+}
+
+/// Başlatılacak/simgesi alınacak `Logseq.exe` yolu: çalışan süreç, ayar dosyası, kayıt
+/// defteri, sabit yollar sırasıyla; ilk var olan.
+pub fn logseq_yolu() -> Option<String> {
+    let calisan = bul().and_then(pencere_surec_yolu);
+    let ayar = ayar_dosyasi()
+        .and_then(|d| std::fs::read_to_string(d).ok())
+        .and_then(|i| yollar::ayar_yolu(&i));
+    let sabit = yollar::sabit_yollar(std::env::var("LOCALAPPDATA").ok().as_deref());
+    yollar::adaylar(calisan, ayar, kayit::uninstall_adaylari(), sabit)
+        .into_iter()
+        .find(|y| Path::new(y).is_file())
+}
+
 pub fn gizle(hwnd: HWND) {
     unsafe { ShowWindow(hwnd, SW_HIDE) };
-    GIZLI.store(hwnd as isize, Ordering::Relaxed);
+    kume().ekle(hwnd as isize);
+}
+
+/// ALT tuşuna basıp bırakır: ön plan kilidini açma yedeği (yalnız düz deneme olmazsa).
+fn alt_dokun() {
+    let tus = |bayrak| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_MENU,
+                wScan: 0,
+                dwFlags: bayrak,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let girdiler = [tus(0), tus(KEYEVENTF_KEYUP)];
+    unsafe {
+        SendInput(
+            girdiler.len() as u32,
+            girdiler.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
 }
 
 pub fn goster(hwnd: HWND) {
     unsafe {
         let komut = mantik::goster_komutu(IsIconic(hwnd) != 0);
         AllowSetForegroundWindow(ASFW_ANY);
-        // ALT hilesi: ön plan kilidini açar.
-        keybd_event(VK_MENU as u8, 0, 0, 0);
-        keybd_event(VK_MENU as u8, 0, KEYEVENTF_KEYUP, 0);
         ShowWindow(hwnd, komut);
         BringWindowToTop(hwnd);
-        SetForegroundWindow(hwnd);
+        if SetForegroundWindow(hwnd) == 0 || GetForegroundWindow() != hwnd {
+            alt_dokun();
+            SetForegroundWindow(hwnd);
+        }
     }
-    GIZLI.store(0, Ordering::Relaxed);
+    kume().cikar(hwnd as isize);
 }
 
+fn surec_olustur(yol: &str, breakaway: bool) -> std::io::Result<std::process::Child> {
+    std::process::Command::new(yol)
+        .env_remove("ELECTRON_RUN_AS_NODE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(mantik::baslat_bayraklari(breakaway))
+        .spawn()
+}
+
+/// Logseq'i ayrık süreç olarak başlatır (Logseq tek örnekli: açıksa kendi penceresini öne getirir).
 pub fn baslat() {
-    // Logseq tek örnekli: zaten açıksa kendi penceresini öne getirir.
-    let _ = std::process::Command::new(mantik::LOGSEQ_YOLU).spawn();
-}
-
-fn uygula(eylem: Eylem, hwnd: Option<HWND>) {
-    match (eylem, hwnd) {
-        (Eylem::Baslat, _) => baslat(),
-        (Eylem::Goster, Some(h)) => goster(h),
-        (Eylem::Gizle, Some(h)) => gizle(h),
-        _ => {}
+    let Some(yol) = logseq_yolu() else {
+        gunluk::yaz("Logseq baslatilamadi: Logseq.exe yolu bulunamadi");
+        return;
+    };
+    let sonuc = surec_olustur(&yol, true).or_else(|e| {
+        gunluk::yaz(&format!(
+            "Logseq iş nesnesinden kopuk baslatilamadi ({e}); bayraksiz deneniyor"
+        ));
+        surec_olustur(&yol, false)
+    });
+    match sonuc {
+        Ok(_) => gunluk::yaz(&format!("Logseq baslatildi: {yol}")),
+        Err(e) => gunluk::yaz(&format!("Logseq baslatilamadi ({yol}): {e}")),
     }
 }
 
-/// Tepsi simgesine sol tık.
+fn toplu_uygula(t: Toplu) {
+    match t {
+        Toplu::Baslat => baslat(),
+        Toplu::Gizle(ler) => ler.into_iter().for_each(|h| gizle(h as HWND)),
+        Toplu::Goster(h) => goster(h as HWND),
+    }
+}
+
+fn hepsini_goster_uygula() {
+    let p = ana_pencereler();
+    let sira = mantik::gosterilecekler(&p, &kume());
+    sira.into_iter().for_each(|h| goster(h as HWND));
+}
+
+/// Tepsi simgesine sol tık: görünür varsa gizle, yoksa en son gizleneni göster.
 pub fn tikla() {
-    let h = bul();
-    uygula(mantik::tikla_karari(h.map(durum)), h);
+    let p = ana_pencereler();
+    let t = mantik::tikla_toplu(&p, &kume());
+    toplu_uygula(t);
 }
 
-/// Menü: "Göster".
-pub fn menu_goster() {
-    let h = bul();
-    uygula(mantik::goster_karari(h.map(durum)), h);
-}
-
-/// Menü: "Tepsiye gizle".
-pub fn menu_gizle() {
-    let h = bul();
-    if let Some(e) = mantik::gizle_karari(h.map(durum)) {
-        uygula(e, h);
+/// Menü eylemi (Çıkış ve Aracı kapat ileti döngüsü sahibinde ele alınır).
+pub fn menu_uygula(e: MenuEylemi) {
+    match e {
+        MenuEylemi::Goster => {
+            let p = ana_pencereler();
+            let t = mantik::goster_toplu(&p, &kume());
+            toplu_uygula(t);
+        }
+        MenuEylemi::Gizle => gizle_hepsi(),
+        MenuEylemi::HepsiniGoster => hepsini_goster_uygula(),
+        MenuEylemi::Cikis => logseq_kapat(),
+        MenuEylemi::AraciKapat => cikista_goster(),
     }
 }
 
-/// Çıkış öncesi: gizli pencere kayıp kalmasın.
+/// "Tepsiye gizle" ve `POST /gizle`: görünür tüm ana pencereler.
+pub fn gizle_hepsi() {
+    let p = ana_pencereler();
+    mantik::gizlenecekler(&p)
+        .into_iter()
+        .for_each(|h| gizle(h as HWND));
+}
+
+/// `POST /goster`: tepsideki tüm ana pencereleri göster, en son gizlenen öne gelir.
+pub fn goster_hepsi() {
+    hepsini_goster_uygula();
+}
+
+/// Çıkış/oturum kapanışı öncesi: gizli hiçbir pencere kayıp kalmasın.
 pub fn cikista_goster() {
-    let h = bul();
-    if mantik::cikista_gostermeli_mi(h.map(durum)) {
-        if let Some(h) = h {
-            goster(h);
+    hepsini_goster_uygula();
+}
+
+/// Menüdeki Çıkış: tüm Logseq ana pencerelerini kapatır. Gizli olanlar önce gösterilir
+/// (kapanmazsa kayıp kalmasın), sonra her birine `WM_CLOSE` (kapatma düğmesi gibi).
+pub fn logseq_kapat() {
+    cikista_goster();
+    for (h, _) in ana_pencereler() {
+        unsafe { PostMessageW(h as HWND, WM_CLOSE, 0, 0) };
+    }
+}
+
+/// Küçültme olayı: Logseq ana penceresi simge durumundaysa gizle. `IsIconic` olay anında
+/// henüz tazelenmemiş olabilir: kararı `Tekrar` ise çağıran kısa gecikmeyle bir kez daha dener.
+pub fn kucultuldu(hwnd: HWND, deneme: u32) -> KucultmeKarari {
+    if !ana_pencere_mi(hwnd) {
+        return KucultmeKarari::Birak;
+    }
+    let karar = mantik::kucultme_karari(unsafe { IsIconic(hwnd) } != 0, deneme);
+    if karar == KucultmeKarari::Gizle {
+        gizle(hwnd);
+    }
+    karar
+}
+
+/// Açılış taraması: araç Logseq açıkken başladıysa küçük pencereyi gizle, gizli olanı hatırla.
+pub fn acilis_taramasi() {
+    for (h, d) in ana_pencereler() {
+        match mantik::acilis_karari(d) {
+            AcilisEylemi::Gizle => gizle(h as HWND),
+            AcilisEylemi::Hatirla => kume().ekle(h),
+            AcilisEylemi::Yok => {}
         }
     }
 }
 
-/// Menüdeki Çıkış: Logseq'i de kapatır. Pencere gizliyse önce gösterilir (kapanmazsa kayıp
-/// kalmasın), sonra kapatma düğmesine basılmış gibi `WM_CLOSE` gönderilir.
-pub fn logseq_kapat() {
-    cikista_goster();
-    if let Some(h) = bul() {
-        unsafe { PostMessageW(h, WM_CLOSE, 0, 0) };
-    }
+/// `GET /durum` için: (tepside gizli pencere sayısı, Logseq açık mı). Yalnız okur.
+pub fn durum_ozeti() -> (usize, bool) {
+    let p = ana_pencereler();
+    (kume().len(), !p.is_empty())
 }
 
-/// Küçültme olayı: Logseq ana penceresi simge durumundaysa gizle.
-pub fn kucultuldu(hwnd: HWND) {
-    if unsafe { IsIconic(hwnd) } != 0 && ana_pencere_mi(hwnd) {
-        gizle(hwnd);
-    }
+/// Tepsi simgesinin menüsünde "Hepsini göster" öğesinin etkinliği için gizli sayısı.
+pub fn gizli_sayisi() -> usize {
+    kume().len()
 }

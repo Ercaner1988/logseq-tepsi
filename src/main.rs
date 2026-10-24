@@ -1,17 +1,35 @@
 #![windows_subsystem = "windows"]
 //! Logseq'i küçültünce sistem tepsisine gizler. Ayrıntı: README.md.
 
-mod mantik;
+mod kayit;
+mod konsol;
+mod kurulum;
 mod pencere;
 mod sina;
 mod tepsi;
+mod uc_sunucu;
+
+use logseq_tepsi_cekirdek::komut::Komut;
+// Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
+use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, uc, yollar};
 
 fn main() {
-    let arg = std::env::args().nth(1);
-    match arg.as_deref() {
-        Some("--sina-gizle-goster") => std::process::exit(sina::gizle_goster()),
-        Some("--sina-kucult") => std::process::exit(sina::kucult()),
-        Some("--sina-simge-tikla") => std::process::exit(sina::simge_tikla()),
-        _ => tepsi::calistir(),
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let komut = komut::cozumle(&args);
+    if komut::konsol_gerekir_mi(komut) {
+        konsol::baglan();
+    }
+    match komut {
+        Komut::Calistir => {
+            gunluk::panik_kancasi_kur();
+            tepsi::calistir();
+        }
+        Komut::Kur => std::process::exit(kurulum::kur()),
+        Komut::Kaldir => std::process::exit(kurulum::kaldir()),
+        Komut::SinaGizleGoster => std::process::exit(sina::gizle_goster()),
+        Komut::SinaKucult => std::process::exit(sina::kucult()),
+        Komut::SinaSimgeTikla => std::process::exit(sina::simge_tikla()),
+        Komut::SinaPencereler => std::process::exit(sina::pencereler()),
+        Komut::SinaTik => std::process::exit(sina::tik()),
     }
 }

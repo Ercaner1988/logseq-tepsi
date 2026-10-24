@@ -4,8 +4,7 @@ use crate::pencere;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsIconic, IsWindowVisible, PostMessageW, SC_MINIMIZE, WM_APP,
-    WM_SYSCOMMAND,
+    GetForegroundWindow, IsIconic, IsWindowVisible, PostMessageW, SC_MINIMIZE, WM_SYSCOMMAND,
 };
 
 fn gor(h: HWND) -> (bool, bool) {
@@ -115,7 +114,7 @@ pub fn simge_tikla() -> i32 {
         bekle(800);
     }
     yaz("baslangic", h);
-    let tik = || unsafe { PostMessageW(ileti, WM_APP + 1, 0, WM_LBUTTONUP as isize) };
+    let tik = || unsafe { PostMessageW(ileti, crate::tepsi::WM_TEPSI, 0, WM_LBUTTONUP as isize) };
     tik();
     bekle(600);
     yaz("tik1 (gizlemeli)", h);
@@ -126,4 +125,34 @@ pub fn simge_tikla() -> i32 {
     println!("on_planda={}", unsafe { GetForegroundWindow() } == h);
     let (g, i) = gor(h);
     i32::from(!(gizlendi && g && !i && hr == 0))
+}
+
+/// Logseq ana pencerelerini listeler (canlı ölçüm): kimlik, görünür, simge durumunda.
+pub fn pencereler() -> i32 {
+    let p = pencere::ana_pencereler();
+    println!("ana_pencere_sayisi={}", p.len());
+    for (h, d) in &p {
+        println!(
+            "hwnd={h:#x} gorunur={} simge_durumunda={}",
+            d.gorunur, d.simge_durumunda
+        );
+    }
+    0
+}
+
+/// Çalışan tepsi sürecinin ileti penceresine tek sol tık iletisi yollar (Logseq açık olmasa da).
+pub fn tik() -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, WM_LBUTTONUP};
+    let sinif: Vec<u16> = crate::tepsi::ILETI_SINIFI
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let ileti = unsafe { FindWindowW(sinif.as_ptr(), std::ptr::null()) };
+    if ileti.is_null() {
+        println!("tepsi sureci yok");
+        return 1;
+    }
+    unsafe { PostMessageW(ileti, crate::tepsi::WM_TEPSI, 0, WM_LBUTTONUP as isize) };
+    println!("tik yollandi");
+    0
 }
