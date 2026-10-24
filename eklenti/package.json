@@ -1,0 +1,22 @@
+{
+  "name": "logseq-tepsi",
+  "version": "0.1.0",
+  "description": "Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen logseq-tepsi aracını Logseq içinden yönetir.",
+  "license": "MIT",
+  "author": "Ercan Er",
+  "type": "module",
+  "main": "dist/index.html",
+  "logseq": {
+    "id": "logseq-tepsi",
+    "title": "Tepsi",
+    "icon": "./icon.svg",
+    "main": "dist/index.html"
+  },
+  "scripts": {
+    "build": "bun build.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@logseq/libs": "0.3.4"
+  }
+}
