@@ -7,7 +7,7 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 - Tepsiye tek simge koyar (Logseq'in kendi simgesi, ipucu "Logseq").
 - Logseq ana penceresi simge durumuna küçültülünce gizler (görev çubuğu düğmesi kalkar). Olay `SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART)` ile yakalanır; yoklama yok, boşta CPU sıfır.
 - Simgeye sol tık: gizliyse göster + geri yükle + öne getir, görünürse gizle. Logseq hiç açık değilse `C:\Program Files\Logseq\Logseq.exe`'yi başlatır.
-- Sağ tık menüsü: Göster, Tepsiye gizle, Çıkış. Çıkış Logseq'i de kapatır (pencere gizliyse önce görünür yapılır, sonra kapatma iletisi gönderilir) ve araç da çıkar.
+- Sağ tık menüsü: Göster, Tepsiye gizle, Çıkış, Tepsi aracını kapat. Çıkış Logseq'i kapatır (gizliyse önce görünür yapılır, sonra kapatma iletisi gönderilir); araç tepside kalır, simgeye tıklayınca Logseq yeniden açılır. "Tepsi aracını kapat" yalnız aracı kapatır, Logseq'e dokunmaz (gizliyse önce gösterir).
 - Kapatma (X) düğmesine dokunmaz: Logseq kapanır, araç ve simge kalır.
 - Tek örnek (ikinci kopya hemen çıkar). Explorer yeniden başlarsa simge geri gelir.
 

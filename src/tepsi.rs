@@ -27,6 +27,7 @@ const WM_KUCULTULDU: u32 = WM_APP + 2;
 const KIMLIK_GOSTER: usize = 1;
 const KIMLIK_GIZLE: usize = 2;
 const KIMLIK_CIKIS: usize = 3;
+const KIMLIK_ARACI_KAPAT: usize = 4;
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static ILETI_PENCERESI: AtomicIsize = AtomicIsize::new(0);
@@ -83,6 +84,12 @@ fn menu_ac(hwnd: HWND) {
         );
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         AppendMenuW(menu, MF_STRING, KIMLIK_CIKIS, genis("Çıkış").as_ptr());
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            KIMLIK_ARACI_KAPAT,
+            genis("Tepsi aracını kapat").as_ptr(),
+        );
         let mut nokta = POINT { x: 0, y: 0 };
         GetCursorPos(&mut nokta);
         SetForegroundWindow(hwnd);
@@ -100,8 +107,10 @@ fn menu_ac(hwnd: HWND) {
         match secim as usize {
             KIMLIK_GOSTER => pencere::menu_goster(),
             KIMLIK_GIZLE => pencere::menu_gizle(),
-            KIMLIK_CIKIS => {
-                pencere::logseq_kapat();
+            // Logseq kapanır, araç tepside kalır: simgeye tıklayınca Logseq yeniden açılır.
+            KIMLIK_CIKIS => pencere::logseq_kapat(),
+            KIMLIK_ARACI_KAPAT => {
+                pencere::cikista_goster();
                 simge_sil(hwnd);
                 PostQuitMessage(0);
             }
