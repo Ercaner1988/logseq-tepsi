@@ -6,6 +6,7 @@ import {
   durumAl,
   gizle,
   type Durum,
+  type Hata,
   type Secenekler,
   type Sonuc,
 } from "./ag";
@@ -139,7 +140,8 @@ export async function ayarEsitle(o: Ortam, depo: AyarDeposu): Promise<void> {
 /**
  * Kullanıcı eklenti ayarını değiştirince: değişen ayarları araca POST eder. Araç kapalıysa ya da
  * ulaşılamazsa uyarır (sessiz kayıp yok); araç değeri reddederse nedenini söyler ve eklenti
- * ayarını araçtaki değere geri alır.
+ * ayarını araçtaki değere geri alır; zaman aşımı ve 503'te (sonuç belirsiz) de araçtaki gerçek
+ * durumla eşitler.
  */
 export async function ayarDegisti(
   o: Ortam,
@@ -164,6 +166,15 @@ export async function ayarDegisti(
     return;
   }
   o.mesaj(ayarIletilemedi(s.hata), "warning", 12000);
+  // Zaman aşımında ve 503'te araç değişikliği uygulamış olabilir ya da uygulamamıştır (iptal
+  // edilmiş olabilir): eklenti ayarını araçtaki gerçek durumla eşitle. Ulaşılamıyorsa (kapalı,
+  // 403) eşitlenecek bir şey yok.
+  if (durumBelirsiz(s.hata)) await ayarEsitle(o, depo);
+}
+
+/** POST sonucu belirsiz mi: zaman aşımı ya da 503 (araç ayarı uygulamış olabilir). */
+function durumBelirsiz(h: Hata): boolean {
+  return h.tur === "zaman-asimi" || (h.tur === "beklenmedik" && h.durum === 503);
 }
 
 /**

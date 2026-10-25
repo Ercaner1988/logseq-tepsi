@@ -5,6 +5,7 @@
 use crate::ayar::AyarDegeri;
 use crate::mantik::{self, KucultmeKarari, MenuEylemi, TepsiOlayi, MENU};
 use crate::menu::{self, Tur};
+use crate::uc::Devir;
 use crate::{
     api, ayar, ayarlar, davranis, gunluk, kisayol, kurulum, not_gonder, pencere, soluk, sunucu,
     tus, uc_sunucu,
@@ -305,15 +306,43 @@ unsafe fn ayar_alt_menusu(
     );
 }
 
-/// Ayar değişikliklerini uygular; dosyada tutulan bir ayar değiştiyse genel kısayol kaydı ve
-/// ipucu tazelenir. Yalnız ileti döngüsü iş parçacığında çağrılır.
-fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) -> String {
-    let (degisti, govde) = ayarlar::uygula(degerler);
+/// Ayar uygulandıktan sonra sırayla yapılan tazeleme adımları.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AyarSonrasi {
+    KisayolTazele,
+    SimgeKoy,
+    BakimPlanla,
+}
+
+/// Dosyada tutulan bir ayar değiştiyse genel kısayol kaydı, ipucu ve bakım planı tazelenir. Bakım
+/// SONDA planlanır: kısayol kaydı çalışırken başarısız olduysa (tuşu başka program tutuyor)
+/// bakım zamanlayıcısı artan gecikmeyle yeniden dener; yalnız açılışta planlansaydı kayıt
+/// bir sonraki Explorer yeniden başlatmasına kadar kalıcı eksik kalırdı.
+fn ayar_sonrasi(degisti: bool, mut adim: impl FnMut(AyarSonrasi)) {
     if degisti {
-        kisayol_tazele(hwnd);
-        simge_koy(hwnd);
+        adim(AyarSonrasi::KisayolTazele);
+        adim(AyarSonrasi::SimgeKoy);
+        adim(AyarSonrasi::BakimPlanla);
     }
-    govde
+}
+
+/// Ayar değişikliklerini uygular (`ayar_sonrasi` adımlarıyla). Çakışma gibi bir nedenle
+/// reddedilirse `Devir::Red`; yalnız ileti döngüsü iş parçacığında çağrılır.
+fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) -> Devir {
+    let (degisti, govde) = match ayarlar::uygula(degerler) {
+        Ok(s) => s,
+        Err(neden) => return Devir::Red(neden),
+    };
+    ayar_sonrasi(degisti, |a| match a {
+        AyarSonrasi::KisayolTazele => kisayol_tazele(hwnd),
+        AyarSonrasi::SimgeKoy => simge_koy(hwnd),
+        AyarSonrasi::BakimPlanla => bakim_planla(hwnd),
+    });
+    if govde.is_empty() {
+        Devir::Tamam
+    } else {
+        Devir::Govde(govde)
+    }
 }
 
 /// Genel kısayolları geçerli ayara göre kaydeder: aynıysa dokunmaz; değişenlerin (ve kaydı
@@ -669,5 +698,35 @@ pub fn calistir(oturum: bool) {
         if soluk_simge != 0 {
             DestroyIcon(soluk_simge as HICON);
         }
+    }
+}
+
+#[cfg(test)]
+mod testler {
+    use super::*;
+
+    fn adimlar(degisti: bool) -> Vec<AyarSonrasi> {
+        let mut yapilan = Vec::new();
+        ayar_sonrasi(degisti, |a| yapilan.push(a));
+        yapilan
+    }
+
+    /// Çalışırken başarısız olan kısayol kaydı için bakım planlanmazsa kayıt kalıcı eksik kalır
+    /// (README: "bakım yeniden dener"); bakım, kayıt denemesinden SONRA planlanmalıdır.
+    #[test]
+    fn ayar_degisince_kisayol_tazelenir_sonra_bakim_planlanir() {
+        assert_eq!(
+            adimlar(true),
+            [
+                AyarSonrasi::KisayolTazele,
+                AyarSonrasi::SimgeKoy,
+                AyarSonrasi::BakimPlanla
+            ]
+        );
+    }
+
+    #[test]
+    fn ayar_degismediyse_hicbir_adim_yapilmaz() {
+        assert_eq!(adimlar(false), []);
     }
 }

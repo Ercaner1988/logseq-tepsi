@@ -61,7 +61,7 @@ Logseq, sabitlenmiş eklenti düğmesi bir kez bile seçilmişse yalnızca sabit
 | Logseq açılınca kaldığım sayfaya dön (araç) | açık | Açılışta, henüz gezinmediyseniz, son sayfaya gider |
 | Logseq açılınca API sunucusu otomatik başlasın (araç) | kapalı | Logseq'in `configs.edn` `:server/autostart` değeri. Logseq açıkken yazılamaz: araç bekletir, Logseq kapanınca uygular; eklenti bunu "Logseq kapanınca uygulanacak" diye bildirir. Araç sonucu `POST /ayar` yanıtında söyler (yazıldı / beklemede / hata): hata olursa (beklenmeyen dosya yapısı) nedenle birlikte uyarır ve ayarı araçtaki değere geri alır |
 
-"(araç)" ile biten ayarlar tepsi aracının ayarlarıdır: tek kaynak aracın `ayar.toml` dosyasıdır. Eklenti açılışta `GET /ayar` ile bunları okuyup ayar sayfasını araçtakine eşitler; sayfada değiştirdiğinizde `POST /ayar` ile araca yazar (araçtan gelen eşitleme geri yazmaz, döngü olmaz). Araç çalışmıyorsa değişiklik iletilemez: eklenti bunu bir uyarıyla bildirir ve ayar, eklenti bir sonraki açılışta araçtaki değere döner. Araç değeri reddederse (örn. geçersiz kısayol) nedeni gösterilir ve ayar araçtaki değere geri alınır.
+"(araç)" ile biten ayarlar tepsi aracının ayarlarıdır: tek kaynak aracın `ayar.toml` dosyasıdır. Eklenti açılışta `GET /ayar` ile bunları okuyup ayar sayfasını araçtakine eşitler; sayfada değiştirdiğinizde `POST /ayar` ile araca yazar (araçtan gelen eşitleme geri yazmaz, döngü olmaz). Araç çalışmıyorsa değişiklik iletilemez: eklenti bunu bir uyarıyla bildirir ve ayar, eklenti bir sonraki açılışta araçtaki değere döner. Araç değeri reddederse (örn. geçersiz kısayol) nedeni gösterilir ve ayar araçtaki değere geri alınır; yanıt zaman aşımına düşerse ya da 503 gelirse (araç değişikliği uygulamış olabilir) de ayar araçtaki gerçek değerle eşitlenir.
 
 ## Anında not, kalınan sayfa ve API sunucusu: ayrıntılar
 
@@ -87,7 +87,7 @@ Adres `http://127.0.0.1:<port>`; her istekte `X-Logseq-Tepsi: 1` başlığı zor
 | `POST /gizle` | `204` |
 | `POST /goster` | `204` |
 | `GET /ayar` | `200 text/plain`: `anahtar=değer` satırları (`kucultme`, `tik`, `kapaliyken_tik_acar`, `kisayol_goster_gizle`, `oturumda_gizli_baslat`, `baslangicta_calis`, `kisayol_not`, `not_hedefi`, `kalinan_sayfa`, `api_otomatik_baslat`, `api_otomatik_bekleyen`) |
-| `POST /ayar` | Gövde: bir ya da birkaç `anahtar=değer` satırı. Araç ayarı eşzamanlı uygular: `204`; gövde `api_otomatik_baslat` içeriyorsa `200` + `api_otomatik_baslat=yazildi\|beklemede\|hata` (+ hatada `api_otomatik_neden=...`); geçersizse (iki kısayolun aynı olması dahil) `400` + neden (gövdede); pencere sahibi zamanında yanıt vermezse `503` |
+| `POST /ayar` | Gövde: bir ya da birkaç `anahtar=değer` satırı. Araç ayarı eşzamanlı uygular: `204`; gövde `api_otomatik_baslat` içeriyorsa `200` + `api_otomatik_baslat=yazildi\|beklemede\|hata` (+ hatada `api_otomatik_neden=...`); geçersizse (iki kısayolun aynı olması dahil; iki eşzamanlı istek arasındaki çakışma da) `400` + neden (gövdede); pencere sahibi zamanında yanıt vermezse `503` |
 
 Eklentinin iframe'i `Origin: lsp://logseq.io` ile istek atar (bazı kurulumlarda `lsp://logseq.com`). Özel başlık gönderildiği için tarayıcı önce bir `OPTIONS` ön denetimi yapar; araç buna `Access-Control-Allow-Origin` (izinli kökenler için), `Access-Control-Allow-Headers: X-Logseq-Tepsi` ve `Access-Control-Allow-Methods: GET, POST, OPTIONS` ile yanıt vermelidir.
 

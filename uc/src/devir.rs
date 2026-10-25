@@ -1,9 +1,11 @@
 //! Sunucu iş parçacığından ileti döngüsü (pencere sahibi) iş parçacığına EŞZAMANLI ayar devri.
 //! Sunucu isteği kuyruğa koyar, pencere sahibini uyandırır ve (zaman aşımına kadar) beklediği
-//! SONUCU yanıta yazar; zaman aşımında istek iptal edilir (kuyrukta ya da yarım kalmaz): "204
-//! döndü ama uygulanmadı/sonradan uygulandı" durumu olmaz. Win32'ye bağımlı değildir; uyandırma
-//! ve bekleme çağıranda (ikili crate'te `SendMessageTimeoutW`).
+//! SONUCU (`Devir`: 204, 200 + gövde ya da pencere sahibinin reddi: 400 + neden) yanıta yazar;
+//! zaman aşımında istek iptal edilir (kuyrukta ya da yarım kalmaz): "204 döndü ama
+//! uygulanmadı/sonradan uygulandı" durumu olmaz. Win32'ye bağımlı değildir; uyandırma ve bekleme
+//! çağıranda (ikili crate'te `SendMessageTimeoutW`).
 
+use crate::uc::Devir;
 use logseq_tepsi_cekirdek::ayar::AyarDegeri;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -11,8 +13,8 @@ enum Durum {
     Bekliyor,
     /// Sunucu vazgeçti: pencere sahibi işlemez.
     Iptal,
-    /// Pencere sahibi işledi; yanıt gövdesi (boş olabilir).
-    Bitti(String),
+    /// Pencere sahibi işledi; sunucunun yanıtını belirleyen sonuç (reddedilmiş de olabilir).
+    Bitti(Devir),
 }
 
 /// Devredilen bir ayar isteği.
@@ -26,9 +28,9 @@ fn kilit(m: &Mutex<Durum>) -> MutexGuard<'_, Durum> {
 }
 
 impl Istek {
-    /// Sunucu: bekleme bittikten sonra. İşlendiyse yanıt gövdesi; işlenmediyse istek iptal edilir
+    /// Sunucu: bekleme bittikten sonra. İşlendiyse sonucu; işlenmediyse istek iptal edilir
     /// (sonradan uygulanmaz) ve `None` döner. İşlem sürüyorsa bitmesini bekler (kilit).
-    pub fn sonuc(&self) -> Option<String> {
+    pub fn sonuc(&self) -> Option<Devir> {
         let mut d = kilit(&self.durum);
         match &*d {
             Durum::Bitti(g) => Some(g.clone()),
@@ -60,8 +62,8 @@ impl Kuyruk {
         istek
     }
 
-    /// Pencere sahibi: kuyruktaki iptal edilmemiş her isteği `isle` ile işler (gövde metni döner).
-    pub fn isle(&self, mut isle: impl FnMut(&[AyarDegeri]) -> String) {
+    /// Pencere sahibi: kuyruktaki iptal edilmemiş her isteği `isle` ile işler (sonucu `Devir` döner).
+    pub fn isle(&self, mut isle: impl FnMut(&[AyarDegeri]) -> Devir) {
         let bekleyenler = std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()));
         for istek in bekleyenler {
             let mut d = kilit(&istek.durum);
@@ -89,15 +91,15 @@ mod testler {
         let mut gorulen = Vec::new();
         k.isle(|d| {
             gorulen.push(d.to_vec());
-            format!("sonuc{}", gorulen.len())
+            Devir::Govde(format!("sonuc{}", gorulen.len()))
         });
         assert_eq!(
             gorulen,
             vec![tik(Tik::Cift), tik(Tik::Tek)],
             "sırayla işlenir"
         );
-        assert_eq!(a.sonuc().as_deref(), Some("sonuc1"));
-        assert_eq!(b.sonuc().as_deref(), Some("sonuc2"));
+        assert_eq!(a.sonuc(), Some(Devir::Govde("sonuc1".into())));
+        assert_eq!(b.sonuc(), Some(Devir::Govde("sonuc2".into())));
         // Kuyruk boşaldı: ikinci işleme boş çalışır.
         k.isle(|_| panic!("kuyruk boş olmalıydı"));
     }
@@ -114,6 +116,14 @@ mod testler {
     }
 
     #[test]
+    fn pencere_sahibinin_reddi_nedenle_sunucuya_ulasir() {
+        let k = Kuyruk::yeni();
+        let istek = k.ekle(tik(Tik::Cift));
+        k.isle(|_| Devir::Red("çakışma".into()));
+        assert_eq!(istek.sonuc(), Some(Devir::Red("çakışma".into())));
+    }
+
+    #[test]
     fn iptal_edilenler_kuyruktan_ayiklanir() {
         let k = Kuyruk::yeni();
         for _ in 0..50 {
@@ -126,8 +136,8 @@ mod testler {
             1,
             "iptal edilenler ayıklandı, yalnız canlı kaldı"
         );
-        k.isle(|_| "tamam".into());
-        assert_eq!(canli.sonuc().as_deref(), Some("tamam"));
+        k.isle(|_| Devir::Tamam);
+        assert_eq!(canli.sonuc(), Some(Devir::Tamam));
     }
 
     #[test]
@@ -137,9 +147,9 @@ mod testler {
         let k2 = k.clone();
         let is = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            k2.isle(|_| "baska-parcacik".into());
+            k2.isle(|_| Devir::Govde("baska-parcacik".into()));
         });
         is.join().unwrap();
-        assert_eq!(istek.sonuc().as_deref(), Some("baska-parcacik"));
+        assert_eq!(istek.sonuc(), Some(Devir::Govde("baska-parcacik".into())));
     }
 }

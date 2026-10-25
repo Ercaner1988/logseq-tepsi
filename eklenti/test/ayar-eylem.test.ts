@@ -145,6 +145,33 @@ describe("ayarDegisti (kullanıcı eklenti ayarını değiştirince)", () => {
     }
   });
 
+  test("zaman aşımı ve 503'te sonuç belirsizdir: uyarılır ve araçtaki gerçek durumla eşitlenir", async () => {
+    // Araçta tik=cift; kullanıcı eklentide tek yaptı, POST yanıtı gelmedi (zaman aşımı/503): araç
+    // isteği iptal etmiş olabilir. Eklenti ayarı araçtaki gerçek değere döner (geçici sapma kalmaz).
+    const yeni = { ...VARSAYILANLAR, tik: "tek" };
+    const eski = { ...VARSAYILANLAR, tik: "cift" };
+    const belirsizler: Hata[] = [{ tur: "zaman-asimi" }, { tur: "beklenmedik", durum: 503 }];
+    for (const h of belirsizler) {
+      const { o, kayit, ayarlar } = kur(ok({ ...ARAC, tik: "cift" }), hata(h), yeni);
+      const depo: AyarDeposu = { bilinen: { ...ARAC } };
+      await ayarDegisti(o, depo, yeni, eski);
+      expect(kayit.mesajlar).toHaveLength(1);
+      expect(kayit.mesajlar[0].metin).toContain("araca iletilemedi");
+      expect(kayit.alinan).toBe(1);
+      expect(ayarlar().tik).toBe("cift");
+      expect(depo.bilinen?.tik).toBe("cift");
+    }
+  });
+
+  test("araç kapalıyken (ya da 403) eşitlenecek bir şey yok: GET denenmez", async () => {
+    for (const h of [{ tur: "kapali" }, { tur: "yasak", durum: 403 }] as Hata[]) {
+      const { o, kayit, ayarlar } = kur(ok({ ...ARAC, tik: "cift" }), hata(h), { ...VARSAYILANLAR, tik: "tek" });
+      await ayarDegisti(o, { bilinen: { ...ARAC } }, { ...VARSAYILANLAR, tik: "tek" }, { ...VARSAYILANLAR, tik: "cift" });
+      expect(kayit.alinan).toBe(0);
+      expect(ayarlar().tik).toBe("tek");
+    }
+  });
+
   test("araç reddederse (400) nedeni gösterilir ve eklenti ayarı geri alınır", async () => {
     const red: Hata = {
       tur: "beklenmedik",

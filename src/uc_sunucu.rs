@@ -34,11 +34,8 @@ fn ayar_devret(hedef: HWND, degerler: &[AyarDegeri]) -> Devir {
             &mut sonuc,
         )
     };
-    match istek.sonuc() {
-        Some(govde) if govde.is_empty() => Devir::Tamam,
-        Some(govde) => Devir::Govde(govde),
-        None => Devir::Basarisiz,
-    }
+    // `Some`: pencere sahibi işledi (204, 200 + gövde ya da reddetti: 400); `None`: işlenmedi (503).
+    istek.sonuc().unwrap_or(Devir::Basarisiz)
 }
 
 /// Sunucuyu başlatır; gizle/göster `ileti_penceresi`ne postalanır, ayar işi eşzamanlı işlenir.
@@ -92,11 +89,11 @@ mod testler {
             WM_UC_AYAR => {
                 ayarlar::kuyruk().isle(|d| {
                     ISLENEN.fetch_add(1, Ordering::SeqCst);
-                    // Tek değer: API sonucu gövdesi; çok değer: gövdesiz.
-                    if d.len() == 1 {
-                        "api_otomatik_baslat=yazildi\n".to_owned()
-                    } else {
-                        String::new()
+                    // Tek değer: API sonucu gövdesi; iki değer: gövdesiz; üç değer: red.
+                    match d.len() {
+                        1 => Devir::Govde("api_otomatik_baslat=yazildi\n".to_owned()),
+                        3 => Devir::Red("sinama reddi".to_owned()),
+                        _ => Devir::Tamam,
                     }
                 });
                 0
@@ -177,6 +174,19 @@ mod testler {
             "gövdesiz sonuç 204"
         );
         assert_eq!(ISLENEN.load(Ordering::SeqCst), 2);
+        // Pencere sahibi reddederse (eşzamanlı iki POST arasındaki çakışma) sonuç 400 nedenidir,
+        // sessiz 204 değil.
+        let uc = [
+            AyarDegeri::Tik(Tik::Cift),
+            AyarDegeri::Tik(Tik::Tek),
+            AyarDegeri::Tik(Tik::Cift),
+        ];
+        assert_eq!(
+            ayar_devret(h as HWND, &uc),
+            Devir::Red("sinama reddi".into()),
+            "red 204 olmamalı"
+        );
+        assert_eq!(ISLENEN.load(Ordering::SeqCst), 3);
         kapat(h, is);
 
         // 2) Pencere sahibi yanıt vermiyor (ileti döngüsünde değil): zaman aşımı, 503, iptal.

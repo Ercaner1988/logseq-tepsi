@@ -80,8 +80,8 @@ fn api_onbellekli_ile(uret: impl FnOnce() -> bool) -> bool {
 }
 
 /// Sunucuyu başlatır. `devret`: yetkili gizle/göster/ayar işini pencere sahibine iletir
-/// (`Devir::Basarisiz` → 503; `Devir::Govde` → işin sonucu 200 gövdesinde). Bağlanamazsa günlüğe
-/// yazar; araç yine çalışır.
+/// (`Devir::Basarisiz` → 503; `Devir::Govde` → işin sonucu 200 gövdesinde;
+/// `Devir::Red` → 400 + neden). Bağlanamazsa günlüğe yazar; araç yine çalışır.
 pub fn baslat(sag: Saglayici, devret: impl Fn(&Is) -> Devir + Send + Sync + 'static) {
     let adres = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uc::PORT);
     let dinleyici = match TcpListener::bind(adres) {
@@ -300,6 +300,12 @@ fn pencere_isi_devret(y: Yanit, devret: &impl Fn(&Is) -> Devir) -> Yanit {
         Devir::Govde(govde) => Yanit {
             kod: 200,
             govde,
+            is: Is::Yok,
+            ..y
+        },
+        Devir::Red(neden) => Yanit {
+            kod: 400,
+            govde: format!("400 Bad Request\n{neden}\n"),
             is: Is::Yok,
             ..y
         },
@@ -537,6 +543,30 @@ mod testler {
         let (y, is) = yanit_al_parcali(&[&ayar_istegi(takas)], false, true);
         assert!(y.starts_with("HTTP/1.1 204"), "{y}");
         assert_eq!(is.len(), 1);
+    }
+
+    /// Doğrulama ile uygulama arasında durum değişti (iki eşzamanlı POST): pencere sahibi reddeder,
+    /// 204 değil 400 + neden döner (eklenti 400'de araçtaki gerçek durumla eşitler).
+    #[test]
+    fn post_ayar_pencere_sahibi_reddederse_400_nedenli() {
+        let dinleyici = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let adres = dinleyici.local_addr().unwrap();
+        let sunucu = std::thread::spawn(move || {
+            let (akim, _) = dinleyici.accept().unwrap();
+            baglanti(akim, SINAMA, &|_: &Is| {
+                Devir::Red("kisayol_not aynı kısayol olamaz".into())
+            });
+        });
+        let mut istemci = TcpStream::connect(adres).unwrap();
+        istemci.write_all(&ayar_istegi("tik=tek\n")).unwrap();
+        let mut yanit = String::new();
+        istemci.read_to_string(&mut yanit).unwrap();
+        sunucu.join().unwrap();
+        assert!(yanit.starts_with("HTTP/1.1 400 Bad Request\r\n"), "{yanit}");
+        assert!(
+            yanit.ends_with("\r\n\r\n400 Bad Request\nkisayol_not aynı kısayol olamaz\n"),
+            "{yanit}"
+        );
     }
 
     /// `dongu`yu gerçek bir dinleyicide koşturur; adresi döndürür.

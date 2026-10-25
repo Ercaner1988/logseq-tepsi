@@ -128,12 +128,14 @@ fn sakla(yeni: &Ayarlar) {
 /// yazılmaz, kısayolu kurar/siler; `ApiOtomatikBaslat` `configs.edn`e (ya da bekleyene) gider.
 /// Dosyada tutulan bir ayar değiştiyse ilk değer `true` (çağıran kısayol kaydını ve ipucunu
 /// tazeler); ikinci değer `POST /ayar` yanıt gövdesidir (`api_otomatik_baslat` sonucu; yoksa boş).
-/// İki genel kısayolu aynı tuşa getiren değişiklik hiç uygulanmaz (menüden gelen de dahil).
-pub fn uygula(degerler: &[AyarDegeri]) -> (bool, String) {
+/// İki genel kısayolu aynı tuşa getiren değişiklik hiç uygulanmaz (menüden gelen de dahil) ve
+/// NEDENİYLE `Err` döner: sunucu doğrulaması ile uygulama arasında başka bir istek durumu
+/// değiştirmiş olabilir (iki eşzamanlı POST), bu yüzden red 204 değil 400 olur.
+pub fn uygula(degerler: &[AyarDegeri]) -> Result<(bool, String), String> {
     let eski = ayar::guncel();
     if let Err(neden) = ayar::cakisma_denetle(&eski, degerler) {
         gunluk::yaz(&format!("ayar reddedildi: {neden}"));
-        return (false, String::new());
+        return Err(neden);
     }
     let mut yeni = eski.clone();
     let mut govde = String::new();
@@ -148,9 +150,34 @@ pub fn uygula(degerler: &[AyarDegeri]) -> (bool, String) {
         }
     }
     if yeni == eski {
-        return (false, govde);
+        return Ok((false, govde));
     }
     gunluk::yaz(&format!("ayar degisti: {degerler:?}"));
     sakla(&yeni);
-    (true, govde)
+    Ok((true, govde))
+}
+
+#[cfg(test)]
+mod testler {
+    use super::*;
+    use crate::ayar::Ayarlar;
+
+    /// İki eşzamanlı POST: ikincisi, birincisi uygulanmadan doğrulanmıştı. Birincisi uygulanınca
+    /// ikincisi çakışır: `uygula` sessizce `(false, "")` (204) DEĞİL nedenli `Err` (400) dönmeli.
+    /// Çakışan değer hiçbir yan etki (dosya, kısayol, kayıt) üretmeden reddedilir.
+    #[test]
+    fn cakisan_degisiklik_nedenle_reddedilir_yan_etkisiz() {
+        let birinci_uygulandi = Ayarlar {
+            kisayol_goster_gizle: "Ctrl+Alt+X".into(),
+            kisayol_not: "Ctrl+Alt+N".into(),
+            ..Ayarlar::default()
+        };
+        ayar::ayarla(birinci_uygulandi.clone());
+        let ikinci = [AyarDegeri::KisayolNot("Ctrl+Alt+X".into())];
+        let Err(neden) = uygula(&ikinci) else {
+            panic!("çakışan değişiklik reddedilmeliydi");
+        };
+        assert!(neden.contains("aynı kısayol olamaz"), "{neden}");
+        assert_eq!(ayar::guncel(), birinci_uygulandi, "ayar değişmemeli");
+    }
 }

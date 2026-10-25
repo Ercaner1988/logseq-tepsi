@@ -127,6 +127,9 @@ pub enum Devir {
     Tamam,
     /// İş işlendi ve sonucu yanıt gövdesinde döner (200, düz metin `anahtar=değer` satırları).
     Govde(String),
+    /// Pencere sahibi değişikliği uygulamadan reddetti (örn. iki eşzamanlı istek arasında kısayol
+    /// çakışması: ikincisi doğrulandığında birincisi henüz uygulanmamıştı): 400 + neden.
+    Red(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

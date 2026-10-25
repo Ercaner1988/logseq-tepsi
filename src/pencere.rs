@@ -10,10 +10,7 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Mutex, MutexGuard};
-use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, MAX_PATH};
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_MENU,
 };
@@ -33,27 +30,10 @@ fn kume() -> MutexGuard<'static, Gizlenenler> {
     GIZLI.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn surec_yolu(pid: u32) -> Option<String> {
-    unsafe {
-        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if h.is_null() {
-            return None;
-        }
-        let mut tampon = [0u16; MAX_PATH as usize * 2];
-        let mut uzunluk = tampon.len() as u32;
-        let tamam = QueryFullProcessImageNameW(h, 0, tampon.as_mut_ptr(), &mut uzunluk);
-        CloseHandle(h);
-        if tamam == 0 {
-            return None;
-        }
-        Some(String::from_utf16_lossy(&tampon[..uzunluk as usize]))
-    }
-}
-
 fn pencere_surec_yolu(hwnd: HWND) -> Option<String> {
     let mut pid = 0u32;
     unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
-    surec_yolu(pid)
+    surec::yol(pid)
 }
 
 /// Pencerenin seçim özelliklerini okur. Ucuz okumalar (sınıf, sahip, başlık, stil) önce,
@@ -438,10 +418,23 @@ pub fn logseq_acik_mi() -> bool {
     !ana_listesi().is_empty()
 }
 
+/// Bilinen `Logseq.exe` yolları: çalışan pencerenin süreci, ayar dosyasındaki son yol (sürüm
+/// süzgeci OLMADAN: eski sürüm çalışıyor olabilir), kayıt defteri ve sabit yollar.
+fn bilinen_yollar() -> Vec<String> {
+    let ayar = ayar_dosyasi()
+        .and_then(|d| std::fs::read_to_string(d).ok())
+        .and_then(|i| yollar::ayar_yolu(&i));
+    let sabit = yollar::sabit_yollar(std::env::var("LOCALAPPDATA").ok().as_deref());
+    let calisan = bul().and_then(pencere_surec_yolu);
+    yollar::adaylar(calisan, ayar, kayit::uninstall_adaylari(), sabit)
+}
+
 /// `Logseq.exe` süreci var mı (ana pencere kapandıktan sonra da süren kapanış ya da gizli
-/// pencere ayırt edilir); süreç listesi alınamazsa var sayılır. Her iş parçacığında güvenli.
+/// pencere ayırt edilir). Aynı adlı başka bir programın süreci sayılmaz: yalnız bilinen Logseq
+/// yollarındaki süreç sayılır; yolu okunamayan süreç ve alınamayan süreç listesi "var" sayılır
+/// (temkinli). Her iş parçacığında güvenli.
 pub fn logseq_surec_var() -> bool {
-    surec::calisiyor_mu(mantik::SUREC_ADI)
+    surec::calisiyor_mu_bilinen(mantik::SUREC_ADI, &bilinen_yollar())
 }
 
 /// Ana Logseq sürecinin (ilk ana pencerenin sahibi) başlangıç anı, unix ms. Eklentinin "araca

@@ -196,10 +196,25 @@ impl Gozlem {
     }
 }
 
+/// `configs.edn` okunamadı ya da yapısı beklenmedik: gerçek değer BİLİNMEZ. `false` varsayıp "yazıldı"
+/// demek yanlış olurdu (istenen `false` ise hiçbir şey yazılmadan başarı bildirilirdi); sabit
+/// nedenli `Etki::Hata` döner (neden yalnız `ErrorKind`/yapı adı taşır, dosya içeriği taşımaz).
+fn okuma_hatasi(h: yapilandirma::Hata, istenen: bool, bekleyen: Option<bool>) -> Sonuc {
+    Sonuc {
+        bekleyen,
+        gunluk: Some(format!("api_otomatik_baslat={istenen}: uygulanamadi: {h}")),
+        etki: Etki::Hata(h.to_string()),
+    }
+}
+
 /// Kullanıcının/eklentinin `api_otomatik_baslat` isteği: `configs.edn`i okuyup kararı verir ve
 /// uygular. Logseq kapandı sayılmıyorsa (`g.kapali()` değilse) dosyaya yazılmaz, bekletilir.
+/// Dosya okunamıyorsa `Etki::Hata` (bekleyen değişmez; istek eklentiye hata olarak döner).
 pub fn istegi_uygula(dosya: &Path, istenen: bool, bekleyen: Option<bool>, g: Gozlem) -> Sonuc {
-    let gercek = yapilandirma::autostart_oku(dosya).unwrap_or(false);
+    let gercek = match yapilandirma::autostart_oku(dosya) {
+        Ok(d) => d,
+        Err(h) => return okuma_hatasi(h, istenen, bekleyen),
+    };
     uygula(
         dosya,
         karar(istenen, gercek, bekleyen, !g.kapali()),
@@ -208,8 +223,15 @@ pub fn istegi_uygula(dosya: &Path, istenen: bool, bekleyen: Option<bool>, g: Goz
 }
 
 /// Durum yoklamasında bekleyen istek: Logseq kapandıysa uygulanır (`None`: yapılacak iş yok).
+/// Dosya okunamıyorsa, yazma hatasıyla AYNI biçimde, bekleyen silinir (her yoklamada yeniden
+/// denenip günlüğü doldurmasın) ve neden günlüğe gider; "yazıldı" denmez.
 pub fn bekleyeni_uygula(dosya: &Path, bekleyen: Option<bool>, g: Gozlem) -> Option<Sonuc> {
-    let gercek = yapilandirma::autostart_oku(dosya).unwrap_or(false);
+    // Okumadan önce ele: Logseq açıkken (ya da bekleyen yokken) dosya hiç okunmaz.
+    let istenen = bekleyen.filter(|_| g.kapali())?;
+    let gercek = match yapilandirma::autostart_oku(dosya) {
+        Ok(d) => d,
+        Err(h) => return Some(okuma_hatasi(h, istenen, None)),
+    };
     match bekleyen_karari(bekleyen, gercek, g.kapali()) {
         Karar::Yok => None,
         k => Some(uygula(dosya, k, bekleyen)),
@@ -328,6 +350,66 @@ mod testler {
         let f = d.join("configs.edn");
         std::fs::write(&f, "{:a 1}").unwrap();
         assert_eq!(bekleyeni_uygula(&f, None, gozlem(false, false, 9)), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Okunamayan ya da yapısı beklenmedik `configs.edn`: gerçek değer bilinmez. Eskiden `false`
+    /// varsayılırdı; istenen `false` ise (gerçek = istenen sanılır) hiçbir şey yazılmadan "yazıldı"
+    /// bildirilirdi. Şimdi hata etkisi döner, bekleyen değişmez, neden içerik taşımaz.
+    #[test]
+    fn okunamayan_dosyada_istek_yazildi_demez_hata_doner() {
+        let kapali = gozlem(false, false, KAPALI_YOKLAMA_SAYISI);
+        let acik = gozlem(true, true, 0);
+        for icerik in [None, Some("[\"bulut-masa-kedi-deniz\"]")] {
+            for istenen in [false, true] {
+                for g in [kapali, acik] {
+                    let d = gecici("okuma-hatasi");
+                    let f = d.join("configs.edn");
+                    if let Some(i) = icerik {
+                        std::fs::write(&f, i).unwrap();
+                    }
+                    let s = istegi_uygula(&f, istenen, Some(true), g);
+                    let Etki::Hata(neden) = &s.etki else {
+                        panic!("hata bekleniyordu ({icerik:?} {istenen} {g:?}): {s:?}");
+                    };
+                    assert!(!neden.contains("bulut-masa"), "{neden}");
+                    assert_eq!(s.bekleyen, Some(true), "bekleyen değişmez");
+                    let gunluk = s.gunluk.unwrap();
+                    assert!(gunluk.contains("uygulanamadi") && !gunluk.contains("bulut-masa"));
+                    assert_eq!(f.exists(), icerik.is_some(), "dosya oluşturulmamalı");
+                    let _ = std::fs::remove_dir_all(&d);
+                }
+            }
+        }
+    }
+
+    /// Bekleyen yazım için dosya okunamıyorsa: Logseq kapalıyken bekleyen (yazma hatasıyla aynı
+    /// biçimde) silinir ve hata günlüğe gider; açıkken dosyaya hiç bakılmaz, bekleyen kalır.
+    #[test]
+    fn bekleyen_icin_dosya_okunamazsa_hata_bekleyen_silinir_aciksa_dokunulmaz() {
+        let d = gecici("bekleyen-okuma");
+        let f = d.join("configs.edn");
+        std::fs::write(&f, "[\"bulut-masa-kedi-deniz\"]").unwrap();
+        let kapali = gozlem(false, false, KAPALI_YOKLAMA_SAYISI);
+        for b in [false, true] {
+            let s = bekleyeni_uygula(&f, Some(b), kapali).expect("hata sonucu bekleniyordu");
+            assert!(matches!(s.etki, Etki::Hata(_)), "{s:?}");
+            assert_eq!(s.bekleyen, None, "sonsuz yeniden deneme olmasın");
+            let g = s.gunluk.unwrap();
+            assert!(
+                g.contains("uygulanamadi") && !g.contains("bulut-masa"),
+                "{g}"
+            );
+        }
+        assert_eq!(
+            bekleyeni_uygula(&f, Some(true), gozlem(true, true, 0)),
+            None
+        );
+        assert_eq!(bekleyeni_uygula(&f, None, kapali), None);
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "[\"bulut-masa-kedi-deniz\"]"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
