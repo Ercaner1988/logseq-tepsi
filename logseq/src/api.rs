@@ -44,7 +44,7 @@ fn yokla_dongusu(
 ) {
     while !durdur.load(Ordering::Relaxed) {
         let acik = etkin() && acik_mi_adres(adres, YOKLAMA_ZAMANI);
-        hedef.store(acik, Ordering::Relaxed);
+        hedef.store(false, Ordering::Relaxed);
         std::thread::sleep(aralik);
     }
 }

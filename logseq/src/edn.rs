@@ -253,7 +253,16 @@ fn girinti(metin: &str, anahtar_bas: usize) -> &str {
 /// değilse üstüne yazılmaz (`oku` ile aynı kural). Çıktı yazılmadan önce yeniden ayrıştırılır:
 /// anahtar tam bir kez ve beklenen değerde değilse `Red::Dogrulanamadi` (sigorta).
 pub fn ayarla(metin: &str, deger: bool) -> Result<String, Red> {
-    let yeni = ayarla_ham(metin, deger)?;
+    ayarla_dogrulamali(metin, deger, ayarla_ham)
+}
+
+/// `uret`in çıktısını döndürmeden önce doğrular (sigorta); sınamada `uret` bozuk çıktı verebilir.
+fn ayarla_dogrulamali(
+    metin: &str,
+    deger: bool,
+    uret: impl Fn(&str, bool) -> Result<String, Red>,
+) -> Result<String, Red> {
+    let yeni = uret(metin, deger)?;
     dogrula(&yeni, deger)?;
     Ok(yeni)
 }
@@ -550,6 +559,35 @@ mod testler {
                 "{metin:?} {deger}"
             );
         }
+    }
+
+    #[test]
+    fn ayarla_bozuk_ciktiyi_doner_degil_reddeder() {
+        // Üretici (hatalı bir düzenleme varsayımı) yinelenen anahtar, eksik anahtar ya da yanlış
+        // değer üretirse `ayarla` bunu yazılacak çıktı olarak DÖNDÜRMEZ.
+        let kotu: [&str; 3] = [
+            "{:server/autostart true :server/autostart true}",
+            "{:a 1}",
+            "{:server/autostart false}",
+        ];
+        for k in kotu {
+            assert_eq!(
+                ayarla_dogrulamali("{:a 1}", true, |_, _| Ok(k.to_owned())),
+                Err(Red::Dogrulanamadi),
+                "{k}"
+            );
+        }
+        assert_eq!(
+            ayarla_dogrulamali("{:a 1}", true, |_, _| Ok(
+                "{:a 1 :server/autostart true}".into()
+            )),
+            Ok("{:a 1 :server/autostart true}".to_owned())
+        );
+        // Üreticinin kendi reddi aynen geçer.
+        assert_eq!(
+            ayarla_dogrulamali("x", true, |_, _| Err(Red::Bos)),
+            Err(Red::Bos)
+        );
     }
 
     #[test]
