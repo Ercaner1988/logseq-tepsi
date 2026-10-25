@@ -439,6 +439,23 @@ mod testler {
     }
 
     #[test]
+    fn ic_ice_kaplarda_dizge_yorum_ve_karakter_kapatmaz() {
+        // Kap içindeki dizgede `}` `]` ve anahtar benzeri, yorumda `}`, karakter sabiti `\}`.
+        let metin = format!(
+            "{{:a [{{:note \"}}] :server/autostart true\"}}\n ; }}\n \\}} \"{SIR}\"] :b (1 ; )\n 2) :server/autostart false}}"
+        );
+        assert_eq!(oku(&metin), Ok(false));
+        let yeni = ayarla(&metin, true).unwrap();
+        assert_eq!(oku(&yeni), Ok(true));
+        assert_eq!(yeni, metin.replace("autostart false", "autostart true"));
+        // Eksik anahtar: kapaniş yine gerçek son `}`'den önce eklenir.
+        let eksik = format!("{{:a [{{:n \"}}\"}}] ; }}\n :b \"{SIR}\"}}");
+        let eklenen = ayarla(&eksik, true).unwrap();
+        assert!(eklenen.ends_with(":server/autostart true}"), "{eklenen}");
+        assert_eq!(oku(&eklenen), Ok(true));
+    }
+
+    #[test]
     fn utf8_icerik_bozulmaz() {
         let metin = "{:başlık \"Çalışma günlüğü ğüşiöç\" :c \\ş :server/autostart false}";
         let yeni = ayarla(metin, true).unwrap();
