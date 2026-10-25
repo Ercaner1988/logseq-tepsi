@@ -10,7 +10,7 @@ Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen [logseq-tepsi](.
   - `Tepsi: durum` (araç çalışıyor mu, sürüm, gizli pencere sayısı)
   - `Tepsi: aracı başlat` (araç kapalıysa başlatmayı dener)
   - `Tepsi: anında not` (hedefe göre bugünün günlük sayfasına ya da yeni "Not <tarih saat>" sayfasına boş blok açar)
-  - `Tepsi: API sunucusunu başlat` / `Tepsi: API sunucusunu durdur` (belgesiz kanal; aşağıda)
+  - `Tepsi: API sunucusunu başlat (deneysel)` / `Tepsi: API sunucusunu durdur (deneysel)` (belgesiz kanal, canlı doğrulanmadı; aşağıda)
 - **Klavye kısayolu**: varsayılan `Ctrl+Shift+X` (Mac'te `Cmd+Shift+X`), ayarlardan değişir.
 - **Açılış denetimi**: Logseq açılırken araç çalışmıyorsa bir kez uyarır; ayarlardan kapatılabilir.
 - **Anında not**: tepsi aracının genel kısayolu (`Ctrl+Alt+N`) ya da tepsi menüsündeki "Anında not" Logseq'e `logseq://x-callback-url/invokeCommand?action=plugin.logseq-tepsi.models.anindaNot&payload=<hedef>` adresini gönderir; eklenti `provideModel({ anindaNot })` ile karşılar. Aynı iş komut paletinden de çalışır.
@@ -59,7 +59,7 @@ Logseq, sabitlenmiş eklenti düğmesi bir kez bile seçilmişse yalnızca sabit
 | Anında not: genel kısayol (araç) | `Ctrl+Alt+N` | Her programda çalışan genel kısayol; Logseq'i gösterir (kapalıysa başlatır) ve not satırı açar. Boş = kapalı |
 | Anında not nereye yazılsın (araç) | `gunluk` | `gunluk`: bugünün günlük sayfasının sonuna boş blok. `yeni_sayfa`: "Not YYYY-MM-DD HH:mm" adlı sayfa (çakışırsa sonuna sayı) |
 | Logseq açılınca kaldığım sayfaya dön (araç) | açık | Açılışta, henüz gezinmediyseniz, son sayfaya gider |
-| Logseq açılınca API sunucusu otomatik başlasın (araç) | kapalı | Logseq'in `configs.edn` `:server/autostart` değeri. Logseq açıkken yazılamaz: araç bekletir, Logseq kapanınca uygular; eklenti bunu "Logseq kapanınca uygulanacak" diye bildirir. Araç yazamazsa (beklenmeyen dosya yapısı) uyarır ve ayarı geri alır |
+| Logseq açılınca API sunucusu otomatik başlasın (araç) | kapalı | Logseq'in `configs.edn` `:server/autostart` değeri. Logseq açıkken yazılamaz: araç bekletir, Logseq kapanınca uygular; eklenti bunu "Logseq kapanınca uygulanacak" diye bildirir. Araç sonucu `POST /ayar` yanıtında söyler (yazıldı / beklemede / hata): hata olursa (beklenmeyen dosya yapısı) nedenle birlikte uyarır ve ayarı araçtaki değere geri alır |
 
 "(araç)" ile biten ayarlar tepsi aracının ayarlarıdır: tek kaynak aracın `ayar.toml` dosyasıdır. Eklenti açılışta `GET /ayar` ile bunları okuyup ayar sayfasını araçtakine eşitler; sayfada değiştirdiğinizde `POST /ayar` ile araca yazar (araçtan gelen eşitleme geri yazmaz, döngü olmaz). Araç çalışmıyorsa değişiklik iletilemez: eklenti bunu bir uyarıyla bildirir ve ayar, eklenti bir sonraki açılışta araçtaki değere döner. Araç değeri reddederse (örn. geçersiz kısayol) nedeni gösterilir ve ayar araçtaki değere geri alınır.
 
@@ -69,9 +69,9 @@ Logseq, sabitlenmiş eklenti düğmesi bir kez bile seçilmişse yalnızca sabit
 
 **Anında not akışı** (`src/not.ts`, Logseq API'si `DefterApi` ile enjekte, birim sınamalı): günlük için önce `:block/journal-day` sorgusu (bugünün `YYYYMMDD` değeri), yoksa `createJournalPage("YYYY-MM-DD")`; yeni sayfa için `createPage` ("Not YYYY-MM-DD HH:mm", yerel saat; ad doluysa ` 2`, ` 3` ...). Sonra `appendBlockInPage(sayfa, "")` ile boş blok, `pushState('page', {name: <uuid>})` ile sayfaya gidiş, 300 ms bekleme ve `editBlock(uuid)`. Herhangi bir Logseq çağrısı hata verirse Türkçe ileti gösterilir, eklenti çökmez.
 
-**Kalınan sayfa** (`src/kalinan.ts`): yalnız `/page/:name` rotaları saklanır. Depo: önce `logseq.FileStorage` (eklenti deposu), olmazsa iframe `localStorage`; erişim hatası fırlatan katman atlanır, hiçbiri çalışmazsa kayıt sessizce atlanır. Açılışta ayar açıksa 1,5 sn beklenir, graf yüklenene kadar (en çok 10 sn) yoklanır; kullanıcı bu arada bir sayfaya gittiyse (`gezildi`) ya da kayıt başka grafa aitse hiçbir şey yapılmaz. Sayfa yoksa (silinmiş) ileti vermeden ana sayfada kalınır.
+**Kalınan sayfa** (`src/kalinan.ts`): yalnız `/page/:name` rotaları saklanır. Depo: önce `logseq.FileStorage` (eklenti deposu), olmazsa iframe `localStorage`; erişim hatası fırlatan katman atlanır, hiçbiri çalışmazsa kayıt sessizce atlanır. Açılışta ayar açıksa 1,5 sn beklenir, graf yüklenene kadar (en çok 10 sn) yoklanır; kullanıcı bu arada bir sayfaya gittiyse (`gezildi`) ya da kayıt başka grafa aitse hiçbir şey yapılmaz. Anında not başlar başlamaz (ilk eşzamansız işten önce) `gezildi` kurulur, sayfa sorgusu sürerken kurulursa da dönüş `git`ten hemen önce yeniden denetlenip iptal edilir: açılıştaki anında not, kalınan sayfaya dönüşle ezilmez. Sayfa yoksa (silinmiş) ileti vermeden ana sayfada kalınır.
 
-**API sunucusu** (`src/sunucu.ts`): Logseq'in kendi arayüzü sunucuyu `window.apis.doAction` ile yönetir (`ipc :server/do :restart` / `:stop`). Eklenti özellik algılamayla `window.top.apis.doAction` varsa `["server/do", "restart"|"stop", "js-obj"]` dizisini çağırır (asar'daki `decode-main-ipc-message` dizi biçimini kabul eder); yoksa, erişim `SecurityError` verirse ya da çağrı hata verirse "Logseq bu sürümde izin vermiyor; Logseq'in kendi sunucu menüsünü kullanın." der. İstek gittikten 1,5 sn sonra aracın `/durum` yanıtındaki `api=` satırıyla sunucunun gerçek durumunu bildirir. **Bu kanal canlı doğrulanmadı**; eklenti iframe'i ana pencereden yalıtılmışsa kullanılamaz (uyarı yolu devreye girer).
+**API sunucusu (deneysel)** (`src/sunucu.ts`): Logseq'in kendi arayüzü sunucuyu `window.apis.doAction` ile yönetir (`ipc :server/do :restart` / `:stop`). Eklenti özellik algılamayla `window.top.apis.doAction` varsa `["server/do", "restart"|"stop", "js-obj"]` dizisini çağırır (asar'daki `decode-main-ipc-message` dizi biçimini kabul eder); yoksa, erişim `SecurityError` verirse ya da çağrı hata verirse "Logseq bu sürümde izin vermiyor; Logseq'in kendi sunucu menüsünü kullanın." der. İstek gittikten 1,5 sn sonra aracın `/durum` yanıtındaki `api=` satırıyla sunucunun gerçek durumunu bildirir. **Bu kanal canlı doğrulanmadı**; eklenti iframe'i ana pencereden yalıtılmışsa kullanılamaz (uyarı yolu devreye girer).
 
 ## `Tepsi: aracı başlat` ve onay penceresi
 
@@ -87,7 +87,7 @@ Adres `http://127.0.0.1:<port>`; her istekte `X-Logseq-Tepsi: 1` başlığı zor
 | `POST /gizle` | `204` |
 | `POST /goster` | `204` |
 | `GET /ayar` | `200 text/plain`: `anahtar=değer` satırları (`kucultme`, `tik`, `kapaliyken_tik_acar`, `kisayol_goster_gizle`, `oturumda_gizli_baslat`, `baslangicta_calis`, `kisayol_not`, `not_hedefi`, `kalinan_sayfa`, `api_otomatik_baslat`, `api_otomatik_bekleyen`) |
-| `POST /ayar` | Gövde: bir ya da birkaç `anahtar=değer` satırı; `204`, geçersizse `400` + neden (gövdede) |
+| `POST /ayar` | Gövde: bir ya da birkaç `anahtar=değer` satırı. Araç ayarı eşzamanlı uygular: `204`; gövde `api_otomatik_baslat` içeriyorsa `200` + `api_otomatik_baslat=yazildi\|beklemede\|hata` (+ hatada `api_otomatik_neden=...`); geçersizse (iki kısayolun aynı olması dahil) `400` + neden (gövdede); pencere sahibi zamanında yanıt vermezse `503` |
 
 Eklentinin iframe'i `Origin: lsp://logseq.io` ile istek atar (bazı kurulumlarda `lsp://logseq.com`). Özel başlık gönderildiği için tarayıcı önce bir `OPTIONS` ön denetimi yapar; araç buna `Access-Control-Allow-Origin` (izinli kökenler için), `Access-Control-Allow-Headers: X-Logseq-Tepsi` ve `Access-Control-Allow-Methods: GET, POST, OPTIONS` ile yanıt vermelidir.
 

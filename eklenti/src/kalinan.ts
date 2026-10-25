@@ -159,7 +159,8 @@ export type DonusSonucu = Karar | "sayfa-yok" | "gidildi";
 
 /**
  * Açılışta bir kez: ayar açıksa, kullanıcı gezinmediyse ve kayıtlı sayfa hâlâ varsa oraya gider.
- * Sayfa yoksa sessizce ana sayfada kalır (ileti yok).
+ * Sayfa yoksa sessizce ana sayfada kalır (ileti yok). Beklemelerin (graf, depo, sayfa sorgusu)
+ * herhangi birinde `gezildi` kurulursa (kullanıcı, anında not ya da başka kod) dönüş iptal edilir.
  */
 export async function kalinanaDon(
   o: KalinanOrtami,
@@ -179,6 +180,8 @@ export async function kalinanaDon(
     varMi = false;
   }
   if (!varMi) return "sayfa-yok";
+  // Sorgu sürerken kullanıcı ya da başka kod (anında not dahil) gezindiyse dönüş iptal: yeni gezintiyi ezmez.
+  if (d.gezildi) return "gezildi";
   o.rota.git(saklanan.sayfa);
   return "gidildi";
 }

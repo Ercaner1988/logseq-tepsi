@@ -118,6 +118,17 @@ pub enum Is {
     Ayar(Vec<AyarDegeri>),
 }
 
+/// Pencere işinin devir sonucu (sunucunun `devret` işlevinin dönüşü).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Devir {
+    /// Pencere sahibine verilemedi ya da zamanında işlenmedi: 503.
+    Basarisiz,
+    /// İş devredildi ve yanıt olduğu gibi (204) döner.
+    Tamam,
+    /// İş işlendi ve sonucu yanıt gövdesinde döner (200, düz metin `anahtar=değer` satırları).
+    Govde(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Yanit {
     pub kod: u16,
@@ -244,11 +255,14 @@ pub fn govde_uzunlugu(istek: &Istek) -> Result<usize, Yanit> {
     }
 }
 
-/// `POST /ayar`: gövde geçerliyse 204 + `Is::Ayar`, değilse 400 (nedenle birlikte).
+/// `POST /ayar`: gövde geçerliyse 204 + `Is::Ayar` (sunucu, pencere sahibinin sonucunu varsa 200 +
+/// gövde olarak döndürür), değilse 400 (nedenle birlikte).
 fn ayar_yaniti(govde: &[u8], cors: Vec<(String, String)>) -> Yanit {
     let coz = std::str::from_utf8(govde)
         .map_err(|_| "gövde UTF-8 değil".to_owned())
-        .and_then(ayar::satirlari_coz);
+        .and_then(ayar::satirlari_coz)
+        // Kısayol çakışması (aynı tuş iki kimliğe verilemez) kayıttan önce reddedilir.
+        .and_then(|d| ayar::cakisma_denetle(&ayar::guncel(), &d).map(|()| d));
     match coz {
         Ok(degerler) => Yanit {
             kod: 204,

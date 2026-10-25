@@ -79,11 +79,12 @@ pub fn ayar_maddeleri(a: &Ayarlar, baslangicta: bool) -> Vec<Madde> {
             },
         )
     };
-    let kisayol = if a.kisayol_goster_gizle.is_empty() {
-        format!("Genel kısayol ({VARSAYILAN_KISAYOL})")
-    } else {
-        format!("Genel kısayol: {}", a.kisayol_goster_gizle)
-    };
+    let kisayol = kisayol_etiketi(
+        "Genel kısayol",
+        &a.kisayol_goster_gizle,
+        VARSAYILAN_KISAYOL,
+        &a.kisayol_not,
+    );
     vec![
         kuc(
             KIMLIK_KUCULTME_TEPSI,
@@ -166,9 +167,12 @@ pub enum AnaEylem {
     ApiSunucusu(bool),
 }
 
-/// Kısayol maddesinin etiketi: açıksa kısayolu, kapalıysa varsayılanı gösterir.
-fn kisayol_etiketi(onek: &str, kisayol: &str, varsayilan: &str) -> String {
-    if kisayol.is_empty() {
+/// Kısayol maddesinin etiketi: açıksa kısayolu, kapalıysa varsayılanı gösterir (varsayılan diğer
+/// kısayolla aynıysa açınca çakışacağı söylenir; açma isteği reddedilir).
+fn kisayol_etiketi(onek: &str, kisayol: &str, varsayilan: &str, diger: &str) -> String {
+    if kisayol.is_empty() && varsayilan == diger {
+        format!("{onek} ({varsayilan} diğer kısayolla çakışır)")
+    } else if kisayol.is_empty() {
         format!("{onek} ({varsayilan})")
     } else {
         format!("{onek}: {kisayol}")
@@ -206,6 +210,7 @@ pub fn ayar_maddeleri_tam(a: &Ayarlar, d: &DisDurum) -> Vec<Madde> {
             "Anında not kısayolu",
             &a.kisayol_not,
             VARSAYILAN_KISAYOL_NOT,
+            &a.kisayol_goster_gizle,
         ),
         Tur::Onay(!a.kisayol_not.is_empty()),
     ));
@@ -252,9 +257,9 @@ pub fn secim_degeri_tam(kimlik: usize, a: &Ayarlar, d: &DisDurum) -> Option<Ayar
 /// Anında not, API sunucusu başlat/durdur (Logseq kapalıyken soluk, durumu etikette).
 pub fn ana_ek_maddeleri(d: &DisDurum) -> Vec<Madde> {
     let (api, etkin) = match (d.logseq_acik, d.api_acik) {
-        (true, true) => ("API sunucusunu durdur (çalışıyor)", true),
-        (true, false) => ("API sunucusunu başlat (kapalı)", true),
-        (false, _) => ("API sunucusu (Logseq kapalı)", false),
+        (true, true) => ("API sunucusunu durdur (deneysel, çalışıyor)", true),
+        (true, false) => ("API sunucusunu başlat (deneysel, kapalı)", true),
+        (false, _) => ("API sunucusu (deneysel, Logseq kapalı)", false),
     };
     vec![
         madde(0, "", Tur::Ayirici),
@@ -631,7 +636,7 @@ mod testler {
         assert_eq!(
             metin(&DIS),
             (
-                "API sunucusunu başlat (kapalı)".to_owned(),
+                "API sunucusunu başlat (deneysel, kapalı)".to_owned(),
                 Tur::Eylem { etkin: true }
             )
         );
@@ -642,7 +647,7 @@ mod testler {
         assert_eq!(
             metin(&acik),
             (
-                "API sunucusunu durdur (çalışıyor)".to_owned(),
+                "API sunucusunu durdur (deneysel, çalışıyor)".to_owned(),
                 Tur::Eylem { etkin: true }
             )
         );
@@ -654,7 +659,7 @@ mod testler {
         assert_eq!(
             metin(&kapali_logseq),
             (
-                "API sunucusu (Logseq kapalı)".to_owned(),
+                "API sunucusu (deneysel, Logseq kapalı)".to_owned(),
                 Tur::Eylem { etkin: false }
             ),
             "Logseq kapalıyken soluk"
@@ -721,5 +726,42 @@ mod testler {
                 "{kimlik} ana menü eylemleriyle çakışıyor"
             );
         }
+    }
+    #[test]
+    fn kapaliyken_varsayilan_diger_kisayolla_cakisiyorsa_etiket_uyarir() {
+        let etiket = |a: &Ayarlar, kimlik| {
+            ayar_maddeleri_tam(a, &DIS)
+                .into_iter()
+                .find(|m| m.kimlik == kimlik)
+                .unwrap()
+                .etiket
+        };
+        let a = Ayarlar {
+            kisayol_goster_gizle: String::new(),
+            kisayol_not: VARSAYILAN_KISAYOL.into(),
+            ..Ayarlar::default()
+        };
+        assert_eq!(
+            etiket(&a, KIMLIK_KISAYOL),
+            "Genel kısayol (Ctrl+Alt+L diğer kısayolla çakışır)"
+        );
+        let b = Ayarlar {
+            kisayol_not: String::new(),
+            kisayol_goster_gizle: VARSAYILAN_KISAYOL_NOT.into(),
+            ..Ayarlar::default()
+        };
+        assert_eq!(
+            etiket(&b, KIMLIK_NOT_KISAYOL),
+            "Anında not kısayolu (Ctrl+Alt+N diğer kısayolla çakışır)"
+        );
+        // Çakışma yoksa eski etiket.
+        let c = Ayarlar {
+            kisayol_not: String::new(),
+            ..Ayarlar::default()
+        };
+        assert_eq!(
+            etiket(&c, KIMLIK_NOT_KISAYOL),
+            "Anında not kısayolu (Ctrl+Alt+N)"
+        );
     }
 }

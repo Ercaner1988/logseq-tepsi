@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Durum, Sonuc } from "../src/ag";
 import { durumAyristir } from "../src/ag";
-import { durumMetni } from "../src/mesajlar";
+import { API_BASLAT_ETIKETI, API_DURDUR_ETIKETI, durumMetni } from "../src/mesajlar";
 import {
   apiEylemiCoz,
   apiSunucusuEylemi,
@@ -133,5 +133,14 @@ describe("/durum api satırı", () => {
     expect(durumMetni(d)).toBe("Tepsi aracı çalışıyor (sürüm 0.1.0). Gizli pencere: 0. Logseq: açık.");
     expect(durumMetni({ ...d, api: "acik" })).toContain("API sunucusu: çalışıyor.");
     expect(durumMetni({ ...d, api: "kapali" })).toContain("API sunucusu: kapalı.");
+  });
+});
+
+describe("komut paleti etiketleri", () => {
+  test("API başlat/durdur canlı doğrulanana kadar (deneysel) etiketli", () => {
+    expect(API_BASLAT_ETIKETI).toContain("(deneysel)");
+    expect(API_DURDUR_ETIKETI).toContain("(deneysel)");
+    expect(API_BASLAT_ETIKETI).toContain("başlat");
+    expect(API_DURDUR_ETIKETI).toContain("durdur");
   });
 });

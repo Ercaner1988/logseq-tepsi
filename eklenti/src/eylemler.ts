@@ -18,7 +18,7 @@ import {
 } from "./ayar";
 import {
   API_AYARI_BEKLEMEDE,
-  API_AYARI_YAZILAMADI,
+  apiAyariYazilamadi,
   ayarIletilemedi,
   ayarReddedildi,
   BASLATILAMADI,
@@ -38,7 +38,11 @@ export interface AgApi {
 
 export interface AyarAgApi {
   ayarAl: (sec?: Secenekler) => Promise<Sonuc<Record<string, string>>>;
-  ayarGonder: (satirlar: string[], sec?: Secenekler) => Promise<Sonuc<null>>;
+  /** Araç `api_otomatik_baslat` sonucunu gövdede verirse çözülmüş çiftler, yoksa `null`. */
+  ayarGonder: (
+    satirlar: string[],
+    sec?: Secenekler,
+  ) => Promise<Sonuc<Record<string, string> | null>>;
 }
 
 export interface Ortam {
@@ -149,8 +153,9 @@ export async function ayarDegisti(
   const s = await ag.ayarGonder(satirlar, o.secenekler());
   if (s.ok) {
     depo.bilinen = satirlariIsle(depo.bilinen, satirlar);
-    const api = satirlar.find((x) => x.startsWith("api_otomatik_baslat="));
-    if (api) await apiAyariSonucu(o, depo, api.slice(api.indexOf("=") + 1));
+    if (satirlar.some((x) => x.startsWith("api_otomatik_baslat="))) {
+      await apiAyariSonucu(o, depo, s.deger);
+    }
     return;
   }
   if (s.hata.tur === "beklenmedik" && s.hata.durum === 400) {
@@ -162,21 +167,27 @@ export async function ayarDegisti(
 }
 
 /**
- * `api_otomatik_baslat` araca iletildikten sonra sonucu bildirir: Logseq açık olduğu için araçta
- * bekliyorsa söyler; araç `configs.edn`e yazamadıysa (istenen değer ile araçtaki değer ayrı ve
- * bekleyen yok) uyarır ve eklenti ayarını araçtaki gerçek değere geri alır.
+ * `api_otomatik_baslat` araca iletildikten sonra sonucu bildirir. Sonuç POST yanıtının gövdesinden
+ * okunur (araç ayarı eşzamanlı uyguladı, ayrıca GET ile yarışılmaz): `beklemede` = Logseq açık,
+ * Logseq kapanınca uygulanacak; `hata` = araç `configs.edn`e yazamadı (neden gövdede): uyarır ve
+ * eklenti ayarını araçtaki gerçek değere geri alır; `yazildi` ya da gövde yok: ileti yok.
  */
-async function apiAyariSonucu(o: Ortam, depo: AyarDeposu, istenen: string): Promise<void> {
-  const g = await (o.ayarAg ?? GERCEK_AYAR_AGI).ayarAl(o.secenekler());
-  if (!g.ok) return;
-  if ((g.deger.api_otomatik_bekleyen ?? "") !== "") {
+async function apiAyariSonucu(
+  o: Ortam,
+  depo: AyarDeposu,
+  sonuc: Record<string, string> | null,
+): Promise<void> {
+  const durum = sonuc?.api_otomatik_baslat;
+  if (durum === "beklemede") {
     o.mesaj(API_AYARI_BEKLEMEDE, "success", 8000);
     return;
   }
-  if (g.deger.api_otomatik_baslat !== istenen) {
-    o.mesaj(API_AYARI_YAZILAMADI, "warning", 10000);
-    depo.bilinen = g.deger;
-    const fark = eklentiFarki(g.deger, o.ayarlar?.());
-    if (Object.keys(fark).length > 0) o.ayarGuncelle?.(fark);
-  }
+  if (durum !== "hata") return;
+  o.mesaj(apiAyariYazilamadi(sonuc?.api_otomatik_neden), "warning", 10000);
+  // Araç işi bitirdi (eşzamanlı yanıt): şimdi okunan değer araçtaki gerçek değerdir.
+  const g = await (o.ayarAg ?? GERCEK_AYAR_AGI).ayarAl(o.secenekler());
+  if (!g.ok) return;
+  depo.bilinen = g.deger;
+  const fark = eklentiFarki(g.deger, o.ayarlar?.());
+  if (Object.keys(fark).length > 0) o.ayarGuncelle?.(fark);
 }

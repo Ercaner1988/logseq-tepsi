@@ -77,7 +77,12 @@ pub fn ipucu_ayarli(
         uyarilar.push("küçültme izlenemiyor");
     }
     if kisayol_hatali {
-        uyarilar.push("kısayol kaydedilemedi");
+        // İki kısayol aynı tuşa ayarlıysa ikincisi kaydedilemez: tanı "başka program" değil, çakışma.
+        uyarilar.push(if ayar.kisayollar_cakisiyor() {
+            "kısayollar çakışıyor"
+        } else {
+            "kısayol kaydedilemedi"
+        });
     }
     if !uyarilar.is_empty() {
         s.push_str(&format!(" ({})", uyarilar.join(", ")));
@@ -259,6 +264,20 @@ mod testler {
         assert_eq!(
             ipucu_ayarli(false, false, &a, true),
             "Logseq kapalı (küçültme izlenemiyor, kısayol kaydedilemedi)"
+        );
+        // Kısayollar aynı tuşa ayarlıysa tanı çakışmadır (başka program değil).
+        let cakisan = Ayarlar {
+            kisayol_not: "Ctrl+Alt+L".into(),
+            ..a.clone()
+        };
+        assert_eq!(
+            ipucu_ayarli(true, true, &cakisan, true),
+            "Logseq (kısayollar çakışıyor)"
+        );
+        assert_eq!(
+            ipucu_ayarli(true, true, &cakisan, false),
+            "Logseq",
+            "hata yoksa çakışma ipucuna girmez"
         );
         // Her birleşim 127 UTF-16 birimin altında.
         for tik in [Tik::Tek, Tik::Cift] {

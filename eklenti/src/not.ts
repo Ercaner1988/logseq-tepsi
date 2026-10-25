@@ -32,6 +32,11 @@ export interface NotOrtami {
   /** Logseq eklenti ayarları (varsayılan hedef için). */
   ayarlar?: () => Record<string, unknown> | undefined;
   defter: DefterApi;
+  /**
+   * Not işlemi başlar başlamaz (ilk eşzamansız işten önce) çağrılır: açılıştaki "kalınan sayfaya
+   * dön" bu notun sayfasına gezinmeyi ezmesin diye kullanıcı gezindi sayılır.
+   */
+  notBasladi?: () => void;
 }
 
 /** Sayfaya gittikten sonra düzenlemeyi açmadan önce yönlendirmenin oturmasını bekler. */
@@ -90,6 +95,7 @@ export async function anindaNotEylemi(
   payload: unknown,
   simdi: Date = new Date(),
 ): Promise<NotSonucu> {
+  o.notBasladi?.();
   const hedef = hedefCoz(payload, o.ayarlar?.()?.notHedefi);
   const d = o.defter;
   const hata = (neden: string): NotSonucu => {

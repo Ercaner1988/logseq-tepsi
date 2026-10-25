@@ -67,8 +67,6 @@ static SIMGE_SOLUK: AtomicIsize = AtomicIsize::new(0);
 static LOGSEQ_DURUMU: AtomicU8 = AtomicU8::new(0);
 static KANCA: AtomicIsize = AtomicIsize::new(0);
 static SIMGE_TAMAM: AtomicBool = AtomicBool::new(false);
-/// Logseq kaç ardışık durum yoklamasıdır kapalı (0: açık).
-static KAPALI_YOKLAMA: AtomicU32 = AtomicU32::new(0);
 static BAKIM_DENEME: AtomicU32 = AtomicU32::new(0);
 static SON_TIK_MS: AtomicU64 = AtomicU64::new(u64::MAX);
 /// Oturumda gizli başlatma yoklamasının başlangıcı (`GetTickCount64`, ms).
@@ -143,6 +141,12 @@ fn logseq_acik_kayitli() -> bool {
     LOGSEQ_DURUMU.load(Ordering::Relaxed) != 1
 }
 
+/// Son yoklamada Logseq açıktı (kapalı ya da henüz bilinmiyor: `false`); API yoklayıcısı yalnız
+/// bu durumda bağlanır.
+fn logseq_acik_biliniyor() -> bool {
+    LOGSEQ_DURUMU.load(Ordering::Relaxed) == 2
+}
+
 /// Logseq durumunu yoklar ve kaydeder; simge/ipucu çizimi bu kayıttan okur.
 fn durum_oku() -> bool {
     let acik = pencere::logseq_acik_mi();
@@ -154,14 +158,12 @@ fn durum_oku() -> bool {
 /// eklenti kendini yeniden gösterir) ve bekleyen `api_otomatik_baslat` yazılır (kapanış
 /// yazımı bitsin diye `KAPALI_YOKLAMA_SAYISI` ardışık yoklama sonra).
 fn kapali_yoklama(acik: bool) {
+    ayarlar::kapali_say(acik);
     if acik {
-        KAPALI_YOKLAMA.store(0, Ordering::Relaxed);
         return;
     }
     sunucu::eklenti_goruldu_sifirla();
-    let n = (KAPALI_YOKLAMA.load(Ordering::Relaxed) + 1).min(api::KAPALI_YOKLAMA_SAYISI);
-    KAPALI_YOKLAMA.store(n, Ordering::Relaxed);
-    ayarlar::bekleyen_api_uygula(n);
+    ayarlar::bekleyen_api_uygula();
 }
 
 /// Durum değiştiyse (ya da hiç yazılmadıysa) simgeyi ve ipucunu tazeler; yoksa dokunmaz.
@@ -202,9 +204,13 @@ fn kanca_kur() -> bool {
     !k.is_null()
 }
 
-/// Kanca ya da simge eksikse bakım zamanlayıcısını (artan gecikmeyle) kurar.
+/// Kanca, simge ya da genel kısayol kaydı eksikse bakım zamanlayıcısını (artan gecikmeyle) kurar.
 fn bakim_planla(hwnd: HWND) {
-    if SIMGE_TAMAM.load(Ordering::Relaxed) && KANCA.load(Ordering::Relaxed) != 0 {
+    if !mantik::bakim_gerekli(
+        SIMGE_TAMAM.load(Ordering::Relaxed),
+        KANCA.load(Ordering::Relaxed) != 0,
+        tus::hatali_var(),
+    ) {
         BAKIM_DENEME.store(0, Ordering::Relaxed);
         return;
     }
@@ -230,6 +236,14 @@ fn bakim(hwnd: HWND) {
         // İpucundaki uyarıyı kaldır.
         simge_koy(hwnd);
         pencere::acilis_taramasi();
+    }
+    if tus::hatali_var() {
+        // Tuşu tutan program bırakmış olabilir: kaydı başarısız kısayollar artan gecikmeyle yeniden denenir.
+        kisayol_tazele(hwnd);
+        if !tus::hatali_var() {
+            gunluk::yaz("genel kisayol yeniden denemede kaydedildi");
+            simge_koy(hwnd);
+        }
     }
     bakim_planla(hwnd);
 }
@@ -263,13 +277,15 @@ unsafe fn maddeleri_ekle(
     }
 }
 
-/// Menü açılırken öğrenilen gerçek durumlar (başlangıç kısayolu, `configs.edn`, API yoklaması).
+/// Menü açılırken öğrenilen gerçek durumlar (başlangıç kısayolu, `configs.edn`, son API durumu).
 fn dis_durum() -> menu::DisDurum {
     let logseq_acik = pencere::logseq_acik_mi();
     menu::DisDurum {
         baslangicta: kurulum::baslangic_var_mi(),
         api_otomatik: ayarlar::api_gercek(),
-        api_acik: logseq_acik && api::acik_mi(),
+        // Son bilinen (arka planda 2 sn'de bir yoklanan) durum: menü açılışı 300 ms'lik TCP
+        // yoklamasıyla ileti döngüsünü bekletmez.
+        api_acik: logseq_acik && api::son_durum(),
         logseq_acik,
     }
 }
@@ -291,22 +307,29 @@ unsafe fn ayar_alt_menusu(
 
 /// Ayar değişikliklerini uygular; dosyada tutulan bir ayar değiştiyse genel kısayol kaydı ve
 /// ipucu tazelenir. Yalnız ileti döngüsü iş parçacığında çağrılır.
-fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) {
-    if ayarlar::uygula(degerler) {
+fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) -> String {
+    let (degisti, govde) = ayarlar::uygula(degerler);
+    if degisti {
         kisayol_tazele(hwnd);
         simge_koy(hwnd);
     }
+    govde
 }
 
-/// Genel kısayolu geçerli ayara göre kaydeder (aynıysa dokunmaz, farklıysa eskisini siler).
+/// Genel kısayolları geçerli ayara göre kaydeder: aynıysa dokunmaz; değişenlerin (ve kaydı
+/// başarısız olanların) hepsi önce bırakılır, sonra kaydedilir (iki kısayol yer değiştirebilir).
 fn kisayol_tazele(hwnd: HWND) {
     let ayar = ayar::guncel();
-    tus::ayarla(
-        hwnd,
-        tus::KIMLIK_GOSTER_GIZLE,
-        kisayol::ayardan(&ayar.kisayol_goster_gizle),
+    tus::ayarla_hepsi(
+        hwnd as isize,
+        &[
+            (
+                tus::KIMLIK_GOSTER_GIZLE,
+                kisayol::ayardan(&ayar.kisayol_goster_gizle),
+            ),
+            (tus::KIMLIK_NOT, kisayol::ayardan(&ayar.kisayol_not)),
+        ],
     );
-    tus::ayarla(hwnd, tus::KIMLIK_NOT, kisayol::ayardan(&ayar.kisayol_not));
 }
 
 /// Oturumda gizli başlatma: Logseq kapalıysa başlatır, ana penceresi görünene kadar (en çok
@@ -462,9 +485,8 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
             0
         }
         WM_UC_AYAR => {
-            for degerler in ayarlar::kuyruktan_al() {
-                ayar_uygula(hwnd, &degerler);
-            }
+            // Sunucu iş parçacığı `SendMessageTimeoutW` ile bekliyor: sonuç kuyruğa yazılır.
+            ayarlar::kuyruk().isle(|degerler| ayar_uygula(hwnd, degerler));
             0
         }
         WM_HOTKEY => {
@@ -612,8 +634,8 @@ pub fn calistir(oturum: bool) {
         gunluk::yaz(&format!("baslatildi (surum {})", env!("CARGO_PKG_VERSION")));
         let simge = simge_yukle();
         SIMGE.store(simge as isize, Ordering::Relaxed);
-        match soluk::uret(simge) {
-            Ok(s) => SIMGE_SOLUK.store(s as isize, Ordering::Relaxed),
+        match soluk::uret(simge as isize) {
+            Ok(s) => SIMGE_SOLUK.store(s, Ordering::Relaxed),
             Err(neden) => gunluk::yaz(&format!(
                 "soluk simge uretilemedi ({neden}); normal simge kullanilacak"
             )),
@@ -621,6 +643,7 @@ pub fn calistir(oturum: bool) {
         ayarlar::yukle();
         kisayol_tazele(hwnd);
         durum_oku();
+        api::yoklayici_baslat(logseq_acik_biliniyor);
         kanca_kur();
         simge_koy(hwnd);
         SetTimer(hwnd, ZAMANLAYICI_DURUM, mantik::DURUM_YOKLAMA_MS, None);
@@ -639,7 +662,7 @@ pub fn calistir(oturum: bool) {
         if k != 0 {
             UnhookWinEvent(k as HWINEVENTHOOK);
         }
-        tus::hepsini_birak(hwnd);
+        tus::hepsini_birak(hwnd as isize);
         simge_sil(hwnd);
         DestroyIcon(simge);
         let soluk_simge = SIMGE_SOLUK.load(Ordering::Relaxed);

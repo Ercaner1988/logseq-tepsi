@@ -1,17 +1,20 @@
 //! Ayarların Win32 tarafı: açılışta yükleme, değişiklikleri uygulama + kaydetme (yalnız ileti
-//! döngüsü iş parçacığında) ve yerel uç iş parçacığından gelen değişikliklerin kuyruğu.
+//! döngüsü iş parçacığında) ve yerel uç iş parçacığından gelen değişikliklerin eşzamanlı kuyruğu.
 //! Saf yapı ve dosya biçimi çekirdekte (`ayar`); `api_otomatik_baslat` gerçek kaynağı Logseq'in
 //! `configs.edn` dosyasıdır (`logseq` crate'i; dosyaya YALNIZ Logseq kapalıyken yazılır).
 
 use crate::ayar::{self, AyarDegeri, Ayarlar};
 use crate::{api, gunluk, pencere, yapilandirma};
 use logseq_tepsi_sistem::kurulum;
+use logseq_tepsi_uc::devir::Kuyruk;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-/// Yerel uçtan gelip ileti döngüsünün işlemesini bekleyen doğrulanmış değişiklikler.
-static KUYRUK: Mutex<Vec<Vec<AyarDegeri>>> = Mutex::new(Vec::new());
+/// Yerel uçtan gelip ileti döngüsünün işlemesini bekleyen doğrulanmış değişiklikler: sunucu
+/// sonucu bekler (`uc_sunucu`), ileti döngüsü `kuyruk().isle(..)` ile işler.
+static KUYRUK: Kuyruk = Kuyruk::yeni();
+/// Logseq ana penceresi kaç ardışık durum yoklamasıdır yok (0: açık).
+static KAPALI_YOKLAMA: AtomicU32 = AtomicU32::new(0);
 /// `false`: bozuk ayar dosyası kenara alınamadı; üstüne yazılmaz.
 static YAZILABILIR: AtomicBool = AtomicBool::new(true);
 
@@ -27,16 +30,31 @@ pub fn yukle() {
     ayar::ayarla(y.ayarlar);
 }
 
-/// Sunucu iş parçacığı: değişiklikleri ileti döngüsüne bırakır.
-pub fn kuyruga_ekle(degerler: Vec<AyarDegeri>) {
-    KUYRUK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(degerler);
+/// Sunucu iş parçacığı isteği buraya koyar; ileti döngüsü `isle` ile işler.
+pub fn kuyruk() -> &'static Kuyruk {
+    &KUYRUK
 }
 
-pub fn kuyruktan_al() -> Vec<Vec<AyarDegeri>> {
-    std::mem::take(&mut *KUYRUK.lock().unwrap_or_else(|e| e.into_inner()))
+/// Durum zamanlayıcısının her adımında (yalnız o; tıklamalar saymaz): Logseq ana penceresi
+/// kapalı kaldıkça sayar, açılınca sıfırlar. Güncel sayıyı döndürür.
+pub fn kapali_say(acik: bool) -> u32 {
+    let n = if acik {
+        0
+    } else {
+        (KAPALI_YOKLAMA.load(Ordering::Relaxed) + 1).min(api::KAPALI_YOKLAMA_SAYISI)
+    };
+    KAPALI_YOKLAMA.store(n, Ordering::Relaxed);
+    n
+}
+
+/// Logseq'in şu anki gözlemi: menü isteği ve bekleyen yolu AYNI kapanış kuralını kullanır (ana
+/// pencere yok, `Logseq.exe` süreci yok, ardışık kapalı yoklama yeterli).
+fn gozlem() -> api::Gozlem {
+    api::Gozlem {
+        ana_pencere_var: pencere::logseq_acik_mi(),
+        surec_var: pencere::logseq_surec_var(),
+        kapali_yoklama: KAPALI_YOKLAMA.load(Ordering::Relaxed),
+    }
 }
 
 /// `%APPDATA%\Logseq\configs.edn`.
@@ -58,38 +76,30 @@ pub fn govde() -> String {
     ayar::guncel().satirlar_tam(kurulum::baslangic_var_mi(), api_gercek())
 }
 
-/// `api_otomatik_baslat` isteği: Logseq kapalıysa `configs.edn`e şimdi yazar, açıksa bekleyen
-/// olarak `yeni`ye işler (Logseq kapanınca `bekleyen_api_uygula` yazar).
-fn api_istegi(yeni: &mut Ayarlar, istenen: bool) {
+/// `api_otomatik_baslat` isteği: Logseq kapandıysa (bkz. `gozlem`) `configs.edn`e şimdi yazar,
+/// değilse bekleyen olarak `yeni`ye işler (Logseq kapanınca `bekleyen_api_uygula` yazar). Sonuç
+/// (yazıldı/beklemede/hata) `POST /ayar` yanıtına gider.
+fn api_istegi(yeni: &mut Ayarlar, istenen: bool) -> api::Etki {
     let Some(dosya) = configs_yolu() else {
         gunluk::yaz("api_otomatik_baslat uygulanamadi: APPDATA yok");
-        return;
+        return api::Etki::Hata("APPDATA bulunamadı".into());
     };
-    let gercek = yapilandirma::autostart_oku(&dosya).unwrap_or(false);
-    let karar = api::karar(
-        istenen,
-        gercek,
-        yeni.api_bekleyen,
-        pencere::logseq_acik_mi(),
-    );
-    let sonuc = api::uygula(&dosya, karar, yeni.api_bekleyen);
+    let sonuc = api::istegi_uygula(&dosya, istenen, yeni.api_bekleyen, gozlem());
     yeni.api_bekleyen = sonuc.bekleyen;
     sonuc.gunluk.iter().for_each(|g| gunluk::yaz(g));
+    sonuc.etki
 }
 
-/// Durum yoklamasından (2 sn): bekleyen `api_otomatik_baslat` varsa ve Logseq `kapali_yoklama`
-/// ardışık yoklamadır kapalıysa `configs.edn`e yazar, bekleyeni siler.
-pub fn bekleyen_api_uygula(kapali_yoklama: u32) {
+/// Durum yoklamasından (2 sn): bekleyen `api_otomatik_baslat` varsa ve Logseq kapandıysa
+/// `configs.edn`e yazar, bekleyeni siler.
+pub fn bekleyen_api_uygula() {
     let eski = ayar::guncel();
-    let (Some(b), Some(dosya)) = (eski.api_bekleyen, configs_yolu()) else {
+    let (Some(_), Some(dosya)) = (eski.api_bekleyen, configs_yolu()) else {
         return;
     };
-    let gercek = yapilandirma::autostart_oku(&dosya).unwrap_or(false);
-    let karar = api::bekleyen_karari(Some(b), gercek, kapali_yoklama);
-    if karar == api::Karar::Yok {
+    let Some(sonuc) = api::bekleyeni_uygula(&dosya, eski.api_bekleyen, gozlem()) else {
         return;
-    }
-    let sonuc = api::uygula(&dosya, karar, eski.api_bekleyen);
+    };
     sonuc.gunluk.iter().for_each(|g| gunluk::yaz(g));
     let mut yeni = eski.clone();
     yeni.api_bekleyen = sonuc.bekleyen;
@@ -116,24 +126,31 @@ fn sakla(yeni: &Ayarlar) {
 
 /// Değişiklikleri uygular ve kaydeder (ileti döngüsü iş parçacığı). `BaslangictaCalis` dosyaya
 /// yazılmaz, kısayolu kurar/siler; `ApiOtomatikBaslat` `configs.edn`e (ya da bekleyene) gider.
-/// Dosyada tutulan bir ayar değiştiyse `true` (çağıran kısayol kaydını ve ipucunu tazeler).
-pub fn uygula(degerler: &[AyarDegeri]) -> bool {
+/// Dosyada tutulan bir ayar değiştiyse ilk değer `true` (çağıran kısayol kaydını ve ipucunu
+/// tazeler); ikinci değer `POST /ayar` yanıt gövdesidir (`api_otomatik_baslat` sonucu; yoksa boş).
+/// İki genel kısayolu aynı tuşa getiren değişiklik hiç uygulanmaz (menüden gelen de dahil).
+pub fn uygula(degerler: &[AyarDegeri]) -> (bool, String) {
     let eski = ayar::guncel();
+    if let Err(neden) = ayar::cakisma_denetle(&eski, degerler) {
+        gunluk::yaz(&format!("ayar reddedildi: {neden}"));
+        return (false, String::new());
+    }
     let mut yeni = eski.clone();
+    let mut govde = String::new();
     for d in degerler {
         match d {
             AyarDegeri::BaslangictaCalis(ac) => match kurulum::baslangic_ayarla(*ac) {
                 Ok(s) => gunluk::yaz(&format!("baslangic kisayolu ({ac}): {s}")),
                 Err(e) => gunluk::yaz(&format!("baslangic kisayolu degistirilemedi: {e}")),
             },
-            AyarDegeri::ApiOtomatikBaslat(b) => api_istegi(&mut yeni, *b),
+            AyarDegeri::ApiOtomatikBaslat(b) => govde = api_istegi(&mut yeni, *b).govde(),
             d => yeni.uygula(d),
         }
     }
     if yeni == eski {
-        return false;
+        return (false, govde);
     }
     gunluk::yaz(&format!("ayar degisti: {degerler:?}"));
     sakla(&yeni);
-    true
+    (true, govde)
 }

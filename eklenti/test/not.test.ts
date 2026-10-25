@@ -67,6 +67,23 @@ function kur(a: Ayar = {}) {
   return { o, olay, mesajlar };
 }
 
+describe("anindaNotEylemi: notBasladi", () => {
+  test("ilk eşzamansız işten ÖNCE çağrılır (kalınan sayfa dönüşü ezmesin)", async () => {
+    const { o, olay } = kur();
+    o.notBasladi = () => void olay.push("notBasladi");
+    await anindaNotEylemi(o, "gunluk", SIMDI);
+    expect(olay[0]).toBe("notBasladi");
+    expect(olay[1]).toMatch(/^gunlukSayfa:/);
+  });
+
+  test("hata olsa da çağrılmıştır", async () => {
+    const { o, olay } = kur({ firlat: "kırıldı" });
+    o.notBasladi = () => void olay.push("notBasladi");
+    expect(await anindaNotEylemi(o, "gunluk", SIMDI)).toBe("hata");
+    expect(olay).toContain("notBasladi");
+  });
+});
+
 describe("hedefCoz", () => {
   test("geçerli payload önce, sonra eklenti ayarı, sonra günlük", () => {
     expect(hedefCoz("yeni_sayfa", "gunluk")).toBe("yeni_sayfa");

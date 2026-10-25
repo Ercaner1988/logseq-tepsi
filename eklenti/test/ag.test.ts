@@ -200,6 +200,21 @@ describe("ayar ucu", () => {
     expect((ayar.headers as Record<string, string>)[ISTEK_BASLIGI]).toBe("1");
   });
 
+  test("ayarGonder: 200 gövdesi (api_otomatik_baslat sonucu) çiftlere çözülür, 204 null verir", async () => {
+    const s = await ayarGonder(["api_otomatik_baslat=evet"], {
+      fetch: yanit(200, "api_otomatik_baslat=hata\napi_otomatik_neden=bir neden\n"),
+    });
+    expect(s).toEqual({
+      ok: true,
+      deger: { api_otomatik_baslat: "hata", api_otomatik_neden: "bir neden" },
+    });
+    const b = await ayarGonder(["api_otomatik_baslat=evet"], {
+      fetch: yanit(200, "api_otomatik_baslat=beklemede\n"),
+    });
+    expect(b).toEqual({ ok: true, deger: { api_otomatik_baslat: "beklemede" } });
+    expect(await ayarGonder(["tik=cift"], { fetch: yanit(204, "") })).toEqual({ ok: true, deger: null });
+  });
+
   test("400 nedeni ayrıntı olarak taşınır; 403 ve 500 değişmez", async () => {
     const s = await ayarGonder(["tik=uc"], {
       fetch: yanit(400, "400 Bad Request\ntik: tek ya da cift olmalı: uc\n"),

@@ -3,7 +3,7 @@
 
 use crate::gizlenen::Gizlenenler;
 
-const SUREC_ADI: &str = "Logseq.exe";
+pub const SUREC_ADI: &str = "Logseq.exe";
 const SINIF_ADI: &str = "Chrome_WidgetWin_1";
 /// `WS_EX_TOOLWINDOW`.
 pub const EX_ARAC_PENCERESI: u32 = 0x0000_0080;
@@ -218,6 +218,12 @@ pub fn kucultme_karari(simge_durumunda: bool, deneme: u32) -> KucultmeKarari {
 pub fn yeniden_gecikmesi_ms(deneme: u32) -> u32 {
     const ADIMLAR: [u32; 5] = [1_000, 2_000, 5_000, 10_000, 30_000];
     ADIMLAR[(deneme as usize).min(ADIMLAR.len() - 1)]
+}
+
+/// Bakım zamanlayıcısı gerekli mi: simge, kanca ya da genel kısayol kaydı eksikse (kaydı başarısız
+/// kısayol da artan gecikmeyle yeniden denenir; tuşu tutan program bırakmış olabilir).
+pub fn bakim_gerekli(simge_tamam: bool, kanca_tamam: bool, kisayol_hatali: bool) -> bool {
+    !simge_tamam || !kanca_tamam || kisayol_hatali
 }
 
 /// Tepsi ipucu: küçültme izlenemiyorsa kullanıcı görsün.
@@ -614,6 +620,17 @@ mod toplu_testler {
         assert_eq!(kucultme_karari(false, 0), KucultmeKarari::Tekrar);
         assert_eq!(kucultme_karari(true, 1), KucultmeKarari::Gizle);
         assert_eq!(kucultme_karari(false, 1), KucultmeKarari::Birak);
+    }
+
+    #[test]
+    fn bakim_kisayol_hatasinda_da_gerekli() {
+        assert!(!bakim_gerekli(true, true, false));
+        assert!(bakim_gerekli(false, true, false));
+        assert!(bakim_gerekli(true, false, false));
+        assert!(
+            bakim_gerekli(true, true, true),
+            "kaydı başarısız kısayol yeniden denenir"
+        );
     }
 
     #[test]

@@ -146,6 +146,43 @@ pub fn bicimle(k: &Kisayol) -> String {
     parcalar.join("+")
 }
 
+/// Kayıt planı: önce `birak` kimlikleri bırakılır, sonra `kaydet` kaydedilir (iki kısayol yer
+/// değiştirirken ikincisi birincinin tuşunu tutmadan kaydedilebilsin).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Plan {
+    /// Bırakılacak kimlikler.
+    pub birak: Vec<i32>,
+    /// Yeni kaydedilecek (kimlik, kısayol) çiftleri.
+    pub kaydet: Vec<(i32, Kisayol)>,
+    /// Kaydı değişen ya da yeniden denenen kimlikler (hata işaretleri bunlar için silinir).
+    pub degisen: Vec<i32>,
+}
+
+/// `mevcut` (kayıtlı kimlik, kısayol) ile `istenen` arasındaki fark. İstenen zaten kayıtlıysa ve
+/// kaydı hatalı değilse dokunulmaz; `hatali` kimlik yeniden denenir (tuşu tutan program bırakmış
+/// olabilir).
+pub fn plan(
+    mevcut: &[(i32, Kisayol)],
+    istenen: &[(i32, Option<Kisayol>)],
+    hatali: impl Fn(i32) -> bool,
+) -> Plan {
+    let mut p = Plan::default();
+    for &(kimlik, yeni) in istenen {
+        let eski = mevcut.iter().find(|(k, _)| *k == kimlik).map(|(_, s)| *s);
+        if eski == yeni && !hatali(kimlik) {
+            continue;
+        }
+        p.degisen.push(kimlik);
+        if eski.is_some() {
+            p.birak.push(kimlik);
+        }
+        if let Some(s) = yeni {
+            p.kaydet.push((kimlik, s));
+        }
+    }
+    p
+}
+
 #[cfg(test)]
 mod testler {
     use super::*;
@@ -236,5 +273,49 @@ mod testler {
         assert_eq!(ayardan(""), None);
         assert_eq!(ayardan("Ctrl+Foo"), None);
         assert_eq!(ayardan("Ctrl+Alt+L"), Some(k(MOD_CONTROL | MOD_ALT, 0x4C)));
+    }
+
+    fn a() -> Kisayol {
+        k(MOD_CONTROL | MOD_ALT, 0x4C)
+    }
+
+    fn b() -> Kisayol {
+        k(MOD_CONTROL | MOD_ALT, 0x4E)
+    }
+
+    #[test]
+    fn plan_takas_once_hepsini_birakir_sonra_kaydeder() {
+        let mevcut = [(1, a()), (2, b())];
+        let p = plan(&mevcut, &[(1, Some(b())), (2, Some(a()))], |_| false);
+        assert_eq!(p.birak, vec![1, 2], "ikisi de bırakılır (takas)");
+        assert_eq!(p.kaydet, vec![(1, b()), (2, a())]);
+        assert_eq!(p.degisen, vec![1, 2]);
+    }
+
+    #[test]
+    fn plan_ayni_olana_dokunmaz_hatali_olani_yeniden_dener() {
+        let mevcut = [(1, a())];
+        assert_eq!(
+            plan(&mevcut, &[(1, Some(a())), (2, None)], |_| false),
+            Plan::default()
+        );
+        // Hatalı kimlik (kayıtlı değil, istenen var): yeniden kaydedilir, bırakılacak yok.
+        let p = plan(&[], &[(2, Some(b()))], |k| k == 2);
+        assert_eq!(
+            (p.birak.as_slice(), p.kaydet.as_slice()),
+            (&[][..], &[(2, b())][..])
+        );
+        assert_eq!(p.degisen, vec![2]);
+        // Hatalı ve istenen yok: yalnız hata işareti temizlensin.
+        let p = plan(&[], &[(2, None)], |k| k == 2);
+        assert_eq!((p.birak, p.kaydet, p.degisen), (vec![], vec![], vec![2]));
+    }
+
+    #[test]
+    fn plan_kapatma_ve_degistirme() {
+        let mevcut = [(1, a()), (2, a())];
+        let p = plan(&mevcut, &[(1, None), (2, Some(b()))], |_| false);
+        assert_eq!(p.birak, vec![1, 2]);
+        assert_eq!(p.kaydet, vec![(2, b())]);
     }
 }

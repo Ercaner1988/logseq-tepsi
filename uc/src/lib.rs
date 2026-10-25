@@ -2,6 +2,7 @@
 //! yalnız-yerel TCP sunucusu. Pencere işleri burada yapılmaz (ikili crate'e devredilir);
 //! karar ve ayar ayrıştırması `logseq-tepsi-cekirdek`te.
 
+pub mod devir;
 pub mod onbellek;
 pub mod sunucu;
 pub mod uc;

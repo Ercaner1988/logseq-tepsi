@@ -1,7 +1,9 @@
 //! Anında not ve API sunucusu başlat/durdur: Logseq'e eklenti adresi (`logseq://...invokeCommand`)
 //! göndermek. Logseq kapalıysa önce başlatılır; ana pencere görününce ve eklenti araca kendini
 //! gösterince (en çok `NOT_TAVAN_MS`) adres gönderilir (eklenti yüklenmeden gelen adres Logseq'te
-//! sessizce kaybolur). Yalnız ileti döngüsü iş parçacığında çağrılır.
+//! sessizce kaybolur). "Eklenti gösterdi" işareti yalnız ŞU ANKİ Logseq sürecinden sonraki
+//! temaslar için geçerlidir (`not::eklenti_hazir_mi`). Yalnız ileti döngüsü iş parçacığında
+//! çağrılır.
 
 use crate::{ayar, gunluk, not, pencere, sunucu};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +34,8 @@ pub fn aninda_not(hwnd: HWND) {
         pencere::adres_gonder(&adres);
         return;
     }
+    // Logseq kapalıydı, yeni süreç başlıyor: önceki örnekten kalan hazır işareti anında sıfırlanır.
+    sunucu::eklenti_goruldu_sifirla();
     *bekleyen() = Some(adres);
     BASLANGIC_MS.store(unsafe { GetTickCount64() }, Ordering::Relaxed);
     unsafe { SetTimer(hwnd, ZAMANLAYICI_NOT, not::NOT_YOKLAMA_MS, None) };
@@ -48,7 +52,7 @@ pub fn yokla(hwnd: HWND) {
     let gecen = unsafe { GetTickCount64() }.saturating_sub(BASLANGIC_MS.load(Ordering::Relaxed));
     let adim = not::not_adimi(
         pencere::gorunur_ana_sayisi(),
-        sunucu::eklenti_goruldu_mu(),
+        not::eklenti_hazir_mi(sunucu::eklenti_son_ms(), pencere::ana_baslangic_ms()),
         gecen,
     );
     if adim == not::NotAdimi::Bekle {

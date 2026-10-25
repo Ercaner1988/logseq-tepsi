@@ -90,7 +90,8 @@ fn bitmaplardan(bilgi: &ICONINFO) -> Result<HICON, &'static str> {
 }
 
 /// `normal` simgeden soluk bir kopya üretir; çağıran `DestroyIcon` ile bırakır.
-pub fn uret(normal: HICON) -> Result<HICON, &'static str> {
+pub fn uret(normal: isize) -> Result<isize, &'static str> {
+    let normal = normal as HICON;
     let mut bilgi: ICONINFO = unsafe { std::mem::zeroed() };
     if unsafe { GetIconInfo(normal, &mut bilgi) } == 0 {
         return Err("GetIconInfo basarisiz");
@@ -98,7 +99,7 @@ pub fn uret(normal: HICON) -> Result<HICON, &'static str> {
     let sonuc = if bilgi.hbmColor.is_null() {
         Err("tek renkli simge (renk bitmap'i yok)")
     } else {
-        bitmaplardan(&bilgi)
+        bitmaplardan(&bilgi).map(|s| s as isize)
     };
     // GetIconInfo bitmap'leri çağırana verir; CreateIconIndirect kendi kopyasını alır.
     unsafe {
@@ -117,15 +118,15 @@ mod testler {
     #[test]
     fn sistem_simgesinden_soluk_kopya_uretilir() {
         let normal = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
-        let soluk = uret(normal).expect("soluk simge uretilmeli");
+        let soluk = uret(normal as isize).expect("soluk simge uretilmeli");
         let mut bilgi: ICONINFO = unsafe { std::mem::zeroed() };
-        assert_ne!(unsafe { GetIconInfo(soluk, &mut bilgi) }, 0);
+        assert_ne!(unsafe { GetIconInfo(soluk as HICON, &mut bilgi) }, 0);
         let (g, y) = olcu(bilgi.hbmColor).expect("renk bitmap'i olculmeli");
         let piksel = pikselleri_oku(bilgi.hbmColor, g, y).expect("pikseller okunmali");
         unsafe {
             DeleteObject(bilgi.hbmColor);
             DeleteObject(bilgi.hbmMask);
-            DestroyIcon(soluk);
+            DestroyIcon(soluk as HICON);
         }
         let gorunen: Vec<&[u8]> = piksel.chunks(4).filter(|p| p[3] > 0).collect();
         assert!(!gorunen.is_empty(), "tamamen saydam simge");

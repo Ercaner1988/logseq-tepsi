@@ -89,3 +89,13 @@ export const API_AYARI_BEKLEMEDE =
   "Logseq açık olduğu için API sunucusu ayarı Logseq kapanınca uygulanacak.";
 export const API_AYARI_YAZILAMADI =
   "Araç API sunucusu ayarını Logseq'in yapılandırma dosyasına yazamadı (ayrıntı aracın günlüğünde).";
+
+/** Araç nedeni bildirdiyse ekler (neden dosya içeriği taşımaz). */
+export function apiAyariYazilamadi(neden: string | undefined): string {
+  const n = (neden ?? "").trim();
+  return n ? `${API_AYARI_YAZILAMADI} Neden: ${n}.` : API_AYARI_YAZILAMADI;
+}
+
+/** Komut paleti etiketleri: `window.top.apis.doAction` erişimi canlı doğrulanana kadar "deneysel". */
+export const API_BASLAT_ETIKETI = "Tepsi: API sunucusunu başlat (deneysel)";
+export const API_DURDUR_ETIKETI = "Tepsi: API sunucusunu durdur (deneysel)";

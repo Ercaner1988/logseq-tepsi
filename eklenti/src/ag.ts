@@ -121,7 +121,8 @@ async function istek(
       const neden = yanit.status === 400 ? (await yanit.text()).trim() : "";
       return { ok: false, hata: neden ? { ...hata, ayrinti: neden } : hata };
     }
-    const yanitGovdesi = yontem === "GET" ? await yanit.text() : "";
+    // GET gövdesi okunur; POST /ayar araç `api_otomatik_baslat` sonucunu verirse 200 + gövde döner.
+    const yanitGovdesi = yontem === "GET" || yanit.status === 200 ? await yanit.text() : "";
     return { ok: true, deger: { durum: yanit.status, govde: yanitGovdesi } };
   } catch (e) {
     return { ok: false, hata: hataSinifla(e) };
@@ -170,8 +171,17 @@ export async function ayarAl(sec?: Secenekler): Promise<Sonuc<Record<string, str
   return { ok: true, deger: ayar };
 }
 
-/** `POST /ayar`: satırlar `anahtar=değer` biçiminde; geçersizse araç 400 + neden döner. */
-export async function ayarGonder(satirlar: string[], sec?: Secenekler): Promise<Sonuc<null>> {
+/**
+ * `POST /ayar`: satırlar `anahtar=değer` biçiminde; geçersizse araç 400 + neden döner. Araç ayarı
+ * pencere iş parçacığında eşzamanlı uygular ve `api_otomatik_baslat` içeren istekte sonucu gövdede
+ * döndürür (200; `api_otomatik_baslat=yazildi|beklemede|hata`, hatada `api_otomatik_neden`): bu
+ * durumda değer çözülmüş çiftlerdir, başka isteklerde (204) `null`.
+ */
+export async function ayarGonder(
+  satirlar: string[],
+  sec?: Secenekler,
+): Promise<Sonuc<Record<string, string> | null>> {
   const s = await istek("POST", "/ayar", sec, satirlar.join("\n") + "\n");
-  return s.ok ? { ok: true, deger: null } : s;
+  if (!s.ok) return s;
+  return { ok: true, deger: s.deger.govde.trim() === "" ? null : ayarAyristir(s.deger.govde) };
 }

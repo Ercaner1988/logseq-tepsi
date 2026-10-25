@@ -33,7 +33,7 @@ interface Kayit {
 /** Sahte Logseq: `ayarlar` canlı eklenti ayarlarıdır, ayarGuncelle onları değiştirir. */
 function kur(
   arac: Sonuc<Record<string, string>>,
-  gonder: Sonuc<null> = ok(null),
+  gonder: Sonuc<Record<string, string> | null> = ok(null),
   baslangic: EklentiAyarlari = VARSAYILANLAR,
 ) {
   const kayit: Kayit = { mesajlar: [], gonderilen: [], guncellenen: [], alinan: 0 };
@@ -176,9 +176,9 @@ describe("api_otomatik_baslat sonucu", () => {
   const eski = { ...VARSAYILANLAR, apiOtomatikBaslat: false };
   const yeni = { ...VARSAYILANLAR, apiOtomatikBaslat: true };
 
+  // Araç ayarı POST'ta eşzamanlı uygular ve sonucu yanıt gövdesinde döndürür (yazildi/beklemede/hata).
   test("Logseq açıkken araç beklemeye aldıysa kullanıcıya 'Logseq kapanınca uygulanacak' denir", async () => {
-    const arac = { ...ARAC, api_otomatik_baslat: "evet", api_otomatik_bekleyen: "evet" };
-    const { o, kayit } = kur(ok(arac));
+    const { o, kayit } = kur(ok(ARAC), ok({ api_otomatik_baslat: "beklemede" }));
     await ayarDegisti(o, { bilinen: { ...ARAC } }, yeni, eski);
     expect(kayit.gonderilen).toEqual([["api_otomatik_baslat=evet"]]);
     expect(kayit.mesajlar).toHaveLength(1);
@@ -186,24 +186,49 @@ describe("api_otomatik_baslat sonucu", () => {
     expect(kayit.mesajlar[0].metin).toContain("Logseq kapanınca uygulanacak");
   });
 
-  test("araç hemen yazdıysa (Logseq kapalıydı) ileti yok", async () => {
-    const arac = { ...ARAC, api_otomatik_baslat: "evet", api_otomatik_bekleyen: "" };
-    const { o, kayit } = kur(ok(arac));
+  test("araç hemen yazdıysa (Logseq kapalıydı) ileti yok ve ayrıca GET yapılmaz", async () => {
+    const { o, kayit } = kur(ok(ARAC), ok({ api_otomatik_baslat: "yazildi" }));
     await ayarDegisti(o, { bilinen: { ...ARAC } }, yeni, eski);
     expect(kayit.gonderilen).toHaveLength(1);
     expect(kayit.mesajlar).toEqual([]);
+    expect(kayit.alinan).toBe(0);
   });
 
-  test("araç yazamadıysa (istenen ≠ araçtaki, bekleyen yok) uyarır ve ayarı geri alır", async () => {
+  test("araç yazamadıysa (hata + neden) uyarır, nedeni söyler ve ayarı araçtaki değere geri alır", async () => {
     const arac = { ...ARAC, api_otomatik_baslat: "hayir", api_otomatik_bekleyen: "" };
-    const { o, kayit, ayarlar } = kur(ok(arac), ok(null), yeni);
+    const { o, kayit, ayarlar } = kur(
+      ok(arac),
+      ok({
+        api_otomatik_baslat: "hata",
+        api_otomatik_neden: "configs.edn beklenmeyen yapıda, yazılmadı: üst düzey öğe bir harita değil",
+      }),
+      yeni,
+    );
     const depo: AyarDeposu = { bilinen: { ...ARAC } };
     await ayarDegisti(o, depo, yeni, eski);
     expect(kayit.mesajlar).toHaveLength(1);
     expect(kayit.mesajlar[0].tur).toBe("warning");
     expect(kayit.mesajlar[0].metin).toContain("yapılandırma dosyasına yazamadı");
+    expect(kayit.mesajlar[0].metin).toContain("üst düzey öğe bir harita değil");
     expect(ayarlar().apiOtomatikBaslat).toBe(false);
     expect(depo.bilinen?.api_otomatik_baslat).toBe("hayir");
+  });
+
+  test("YARIŞ: GET henüz eski durumu gösterse de sonuç gövdeden okunur ('yazılamadı' denmez, ayar geri alınmaz)", async () => {
+    // Eski davranış: POST 204'ü işlemeden dönerdi, eklenti hemen GET yapıp eski durumu (istenen ≠
+    // araçtaki, bekleyen yok) görür ve yanlışlıkla "yazılamadı" deyip ayarı geri alırdı; oysa araç
+    // aynı anda isteği bekletiyordu (api_bekleyen=evet kalır).
+    const uygulanmamis = { ...ARAC, api_otomatik_baslat: "hayir", api_otomatik_bekleyen: "" };
+    const { o, kayit, ayarlar } = kur(ok(uygulanmamis), ok({ api_otomatik_baslat: "beklemede" }), yeni);
+    const depo: AyarDeposu = { bilinen: { ...ARAC } };
+    await ayarDegisti(o, depo, yeni, eski);
+    expect(kayit.alinan).toBe(0);
+    expect(kayit.mesajlar).toHaveLength(1);
+    expect(kayit.mesajlar[0].tur).toBe("success");
+    expect(kayit.mesajlar[0].metin).toContain("Logseq kapanınca uygulanacak");
+    expect(kayit.mesajlar[0].metin).not.toContain("yazamadı");
+    expect(ayarlar().apiOtomatikBaslat).toBe(true);
+    expect(depo.bilinen?.api_otomatik_baslat).toBe("evet");
   });
 
   test("başka ayar değişince api sorgusu yapılmaz", async () => {

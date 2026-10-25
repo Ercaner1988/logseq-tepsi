@@ -179,6 +179,18 @@ describe("kalinanaDon", () => {
     expect(olay.some((x) => x.startsWith("git:"))).toBe(false);
   });
 
+  test("sayfa sorgusu sürerken gezinme (kullanıcı ya da anında not) olursa dönüş iptal edilir", async () => {
+    const { o, olay } = kur({ depoIcerik: KAYIT, sayfalar: ["Not Defteri"] });
+    const d = yeniDurum();
+    const sorgu = o.rota.sayfaVarMi;
+    o.rota.sayfaVarMi = async (ad) => {
+      d.gezildi = true; // sorgu sürerken anında not başladı / kullanıcı başka sayfaya gitti
+      return sorgu(ad);
+    };
+    expect(await kalinanaDon(o, d, true)).toBe("gezildi");
+    expect(olay.some((x) => x.startsWith("git:"))).toBe(false);
+  });
+
   test("sayfa silinmişse sessizce ana sayfada kalır", async () => {
     const { o, olay } = kur({ depoIcerik: KAYIT, sayfalar: [] });
     expect(await kalinanaDon(o, yeniDurum(), true)).toBe("sayfa-yok");

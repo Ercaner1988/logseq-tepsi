@@ -4,12 +4,12 @@
 //! olmamalı (`panic = "abort"`). Win32'ye bağımlı değildir.
 
 use crate::onbellek::ZamanliOnbellek;
-use crate::uc::{self, Is, Yanit};
+use crate::uc::{self, Devir, Is, Yanit};
 use logseq_tepsi_cekirdek::gunluk;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// `/durum` sonucunun ömrü: sürekli yoklamada `EnumWindows` yükünü sınırlar.
@@ -24,15 +24,29 @@ const API_ONBELLEK_MS: u64 = 1_000;
 static API_ONBELLEGI: Mutex<ZamanliOnbellek<bool>> =
     Mutex::new(ZamanliOnbellek::yeni(API_ONBELLEK_MS));
 
-/// Eklenti (izinli Origin ile yetkili istek) araca ulaştı mı? Logseq kapanınca sıfırlanır.
-static EKLENTI_GORULDU: AtomicBool = AtomicBool::new(false);
+/// Eklentinin (izinli Origin ile yetkili istek) araca son ulaştığı an (unix ms, 0 = hiç). Logseq
+/// kapanınca sıfırlanır; ayrıca zaman damgası, bayat işaretin YENİ Logseq sürecinde hazır
+/// sayılmasını önler (`not::eklenti_hazir_mi`).
+static EKLENTI_SON_MS: AtomicU64 = AtomicU64::new(0);
 
 pub fn eklenti_goruldu_mu() -> bool {
-    EKLENTI_GORULDU.load(Ordering::Relaxed)
+    EKLENTI_SON_MS.load(Ordering::Relaxed) != 0
+}
+
+/// Eklentinin son teması (unix ms); hiç ulaşmadıysa 0.
+pub fn eklenti_son_ms() -> u64 {
+    EKLENTI_SON_MS.load(Ordering::Relaxed)
 }
 
 pub fn eklenti_goruldu_sifirla() {
-    EKLENTI_GORULDU.store(false, Ordering::Relaxed);
+    EKLENTI_SON_MS.store(0, Ordering::Relaxed);
+}
+
+fn simdi_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_millis() as u64)
+        .max(1)
 }
 
 /// Sunucunun çağıran tarafından beslendiği veriler.
@@ -66,8 +80,9 @@ fn api_onbellekli_ile(uret: impl FnOnce() -> bool) -> bool {
 }
 
 /// Sunucuyu başlatır. `devret`: yetkili gizle/göster/ayar işini pencere sahibine iletir
-/// (başarısızsa `false` → 503). Bağlanamazsa günlüğe yazar; araç yine çalışır.
-pub fn baslat(sag: Saglayici, devret: impl Fn(&Is) -> bool + Send + 'static) {
+/// (`Devir::Basarisiz` → 503; `Devir::Govde` → işin sonucu 200 gövdesinde). Bağlanamazsa günlüğe
+/// yazar; araç yine çalışır.
+pub fn baslat(sag: Saglayici, devret: impl Fn(&Is) -> Devir + Send + Sync + 'static) {
     let adres = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uc::PORT);
     let dinleyici = match TcpListener::bind(adres) {
         Ok(d) => d,
@@ -78,21 +93,73 @@ pub fn baslat(sag: Saglayici, devret: impl Fn(&Is) -> bool + Send + 'static) {
     };
     let sonuc = std::thread::Builder::new()
         .name("yerel-uc".into())
-        .spawn(move || dongu(&dinleyici, sag, &devret));
+        .spawn(move || {
+            dongu(
+                &dinleyici,
+                sag,
+                Arc::new(devret),
+                Arc::new(AtomicUsize::new(0)),
+                BAGLANTI_TAVANI,
+            )
+        });
     match sonuc {
         Ok(_) => gunluk::yaz(&format!("yerel uc: {adres} dinleniyor")),
         Err(e) => gunluk::yaz(&format!("yerel uc: is parcacigi baslamadi: {e}")),
     }
 }
 
-fn dongu(dinleyici: &TcpListener, sag: Saglayici, devret: &impl Fn(&Is) -> bool) {
+/// Aynı anda en çok bu kadar bağlantı işlenir: yavaş ya da asılı bir istemci (2 sn okuma süresi)
+/// diğerlerini bekletmez, ama iş parçacığı sayısı da sınırlı kalır; fazlasına hemen 503.
+const BAGLANTI_TAVANI: usize = 8;
+
+/// Açık bağlantı yeri; bırakılınca (bağlantı iş parçacığı bitince) sayaç düşer.
+struct Yer(Arc<AtomicUsize>);
+
+impl Drop for Yer {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn yer_al(sayac: &Arc<AtomicUsize>, tavan: usize) -> Option<Yer> {
+    if sayac.fetch_add(1, Ordering::Relaxed) >= tavan {
+        sayac.fetch_sub(1, Ordering::Relaxed);
+        return None;
+    }
+    Some(Yer(sayac.clone()))
+}
+
+/// Kabul döngüsü: her bağlantı kendi iş parçacığında (en çok `tavan`) işlenir.
+fn dongu<D: Fn(&Is) -> Devir + Send + Sync + 'static>(
+    dinleyici: &TcpListener,
+    sag: Saglayici,
+    devret: Arc<D>,
+    sayac: Arc<AtomicUsize>,
+    tavan: usize,
+) {
     for akim in dinleyici.incoming() {
-        match akim {
-            Ok(a) => baglanti(a, sag, devret),
+        let a = match akim {
+            Ok(a) => a,
             Err(e) => {
                 gunluk::yaz(&format!("yerel uc: accept hatasi: {e}"));
                 std::thread::sleep(Duration::from_millis(200));
+                continue;
             }
+        };
+        let Some(yer) = yer_al(&sayac, tavan) else {
+            gunluk::yaz("yerel uc: es zamanli baglanti tavani asildi, 503");
+            yanit_ver(a, &hizmet_yok());
+            continue;
+        };
+        let devret = devret.clone();
+        let sonuc = std::thread::Builder::new()
+            .name("yerel-uc-baglanti".into())
+            .spawn(move || {
+                let _yer = yer;
+                baglanti(a, sag, &*devret);
+            });
+        if let Err(e) = sonuc {
+            gunluk::yaz(&format!("yerel uc: baglanti is parcacigi baslamadi: {e}"));
         }
     }
 }
@@ -199,13 +266,13 @@ fn yanit_hazirla(akim: &mut TcpStream, sag: Saglayici) -> Option<Yanit> {
         sag.ayar_metni,
     );
     if yanit.kod < 300 && uc::eklenti_istegi_mi(&istek) {
-        EKLENTI_GORULDU.store(true, Ordering::Relaxed);
+        EKLENTI_SON_MS.store(simdi_unix_ms(), Ordering::Relaxed);
     }
     uc::durum_yanitina_api_ekle(&istek, &mut yanit, || api_onbellekli_ile(sag.api_acik));
     Some(yanit)
 }
 
-fn baglanti(mut akim: TcpStream, sag: Saglayici, devret: &impl Fn(&Is) -> bool) {
+fn baglanti(mut akim: TcpStream, sag: Saglayici, devret: &impl Fn(&Is) -> Devir) {
     let Some(yanit) = yanit_hazirla(&mut akim, sag) else {
         return;
     };
@@ -213,17 +280,32 @@ fn baglanti(mut akim: TcpStream, sag: Saglayici, devret: &impl Fn(&Is) -> bool) 
     yanit_ver(akim, &yanit);
 }
 
-/// Yetkili `POST /gizle|/goster|/ayar` ise işi `devret` ile pencere sahibine verir; verilemezse 503.
-fn pencere_isi_devret(y: Yanit, devret: &impl Fn(&Is) -> bool) -> Yanit {
-    if y.is == Is::Yok || devret(&y.is) {
-        y
-    } else {
-        gunluk::yaz("yerel uc: is pencere sahibine devredilemedi");
-        Yanit {
-            kod: 503,
-            govde: "503 Service Unavailable\n".into(),
-            basliklar: Vec::new(),
+fn hizmet_yok() -> Yanit {
+    Yanit {
+        kod: 503,
+        govde: "503 Service Unavailable\n".into(),
+        basliklar: Vec::new(),
+        is: Is::Yok,
+    }
+}
+
+/// Yetkili `POST /gizle|/goster|/ayar` ise işi `devret` ile pencere sahibine verir; verilemezse (ya
+/// da zamanında işlenmezse) 503. İş sonuç gövdesi döndürdüyse yanıt 200 + gövde olur.
+fn pencere_isi_devret(y: Yanit, devret: &impl Fn(&Is) -> Devir) -> Yanit {
+    if y.is == Is::Yok {
+        return y;
+    }
+    match devret(&y.is) {
+        Devir::Tamam => y,
+        Devir::Govde(govde) => Yanit {
+            kod: 200,
+            govde,
             is: Is::Yok,
+            ..y
+        },
+        Devir::Basarisiz => {
+            gunluk::yaz("yerel uc: is pencere sahibine devredilemedi");
+            hizmet_yok()
         }
     }
 }
@@ -255,7 +337,11 @@ mod testler {
             let (akim, _) = dinleyici.accept().unwrap();
             baglanti(akim, SINAMA, &|is: &Is| {
                 kayit.lock().unwrap().push(is.clone());
-                devret_sonucu
+                if devret_sonucu {
+                    Devir::Tamam
+                } else {
+                    Devir::Basarisiz
+                }
             });
         });
         let mut istemci = TcpStream::connect(adres).unwrap();
@@ -414,6 +500,113 @@ mod testler {
     }
 
     #[test]
+    fn post_ayar_devir_sonucu_govdede_200_doner() {
+        // Pencere sahibi işi eşzamanlı uyguladı ve sonucu bildirdi: yanıt 204 değil, 200 + gövde.
+        let dinleyici = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let adres = dinleyici.local_addr().unwrap();
+        let sunucu = std::thread::spawn(move || {
+            let (akim, _) = dinleyici.accept().unwrap();
+            baglanti(akim, SINAMA, &|_: &Is| {
+                Devir::Govde("api_otomatik_baslat=beklemede\n".into())
+            });
+        });
+        let mut istemci = TcpStream::connect(adres).unwrap();
+        istemci
+            .write_all(&ayar_istegi("api_otomatik_baslat=evet\n"))
+            .unwrap();
+        let mut yanit = String::new();
+        istemci.read_to_string(&mut yanit).unwrap();
+        sunucu.join().unwrap();
+        assert!(yanit.starts_with("HTTP/1.1 200 OK\r\n"), "{yanit}");
+        assert!(yanit.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(
+            yanit.ends_with("\r\n\r\napi_otomatik_baslat=beklemede\n"),
+            "{yanit}"
+        );
+    }
+
+    #[test]
+    fn post_ayar_kisayol_cakismasi_400_takas_204() {
+        // Varsayılan ayar: göster/gizle Ctrl+Alt+L, not Ctrl+Alt+N (bu sınama ikilisinde genel
+        // durum hiç değiştirilmez).
+        let (y, is) = yanit_al_parcali(&[&ayar_istegi("kisayol_not=Ctrl+Alt+L\n")], false, true);
+        assert!(y.starts_with("HTTP/1.1 400"), "{y}");
+        assert!(y.contains("aynı kısayol olamaz"), "{y}");
+        assert!(is.is_empty(), "çakışan ayar devredilmemeli");
+        let takas = "kisayol_goster_gizle=Ctrl+Alt+N\nkisayol_not=Ctrl+Alt+L\n";
+        let (y, is) = yanit_al_parcali(&[&ayar_istegi(takas)], false, true);
+        assert!(y.starts_with("HTTP/1.1 204"), "{y}");
+        assert_eq!(is.len(), 1);
+    }
+
+    /// `dongu`yu gerçek bir dinleyicide koşturur; adresi döndürür.
+    fn dongu_baslat(tavan: usize) -> std::net::SocketAddr {
+        let dinleyici = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let adres = dinleyici.local_addr().unwrap();
+        std::thread::spawn(move || {
+            dongu(
+                &dinleyici,
+                SINAMA,
+                Arc::new(|_: &Is| Devir::Tamam),
+                Arc::new(AtomicUsize::new(0)),
+                tavan,
+            )
+        });
+        adres
+    }
+
+    fn durum_iste(adres: std::net::SocketAddr) -> String {
+        let mut c = TcpStream::connect(adres).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let istek = "GET /ayar HTTP/1.1\r\nHost: 127.0.0.1:47123\r\nX-Logseq-Tepsi: 1\r\n\r\n";
+        c.write_all(istek.as_bytes()).unwrap();
+        let mut y = String::new();
+        let _ = c.read_to_string(&mut y);
+        y
+    }
+
+    #[test]
+    fn asili_istemci_digerlerini_bekletmez() {
+        let adres = dongu_baslat(8);
+        // Asılı istemci: bağlanır, hiçbir şey göndermez (sunucu 2 sn okuma süresi tutar).
+        let _asili = TcpStream::connect(adres).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let basla = Instant::now();
+        let y = durum_iste(adres);
+        assert!(y.starts_with("HTTP/1.1 200 OK"), "{y}");
+        assert!(
+            basla.elapsed() < Duration::from_millis(1000),
+            "ikinci istek asılı olanı beklemiş: {:?}",
+            basla.elapsed()
+        );
+    }
+
+    #[test]
+    fn es_zamanli_baglanti_tavani_asilirsa_hemen_503() {
+        let adres = dongu_baslat(1);
+        let _asili = TcpStream::connect(adres).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let basla = Instant::now();
+        let y = durum_iste(adres);
+        assert!(y.starts_with("HTTP/1.1 503 Service Unavailable"), "{y}");
+        assert!(basla.elapsed() < Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn yer_alinir_birakilinca_serbest_kalir() {
+        let sayac = Arc::new(AtomicUsize::new(0));
+        let a = yer_al(&sayac, 2).unwrap();
+        let b = yer_al(&sayac, 2).unwrap();
+        assert!(yer_al(&sayac, 2).is_none(), "tavan 2");
+        assert_eq!(sayac.load(Ordering::Relaxed), 2, "reddedilen yer sayılmaz");
+        drop(a);
+        let c = yer_al(&sayac, 2);
+        assert!(c.is_some(), "bırakılan yer yeniden alınabilir");
+        drop((b, c));
+        assert_eq!(sayac.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn post_ayar_devredilemezse_503() {
         let (y, is) = yanit_al_parcali(&[&ayar_istegi("tik=cift\n")], false, false);
         assert!(y.starts_with("HTTP/1.1 503"), "{y}");
@@ -462,8 +655,14 @@ mod testler {
             eklenti_goruldu_mu(),
             "izinli Origin + yetki eklenti sayılır"
         );
+        assert!(
+            eklenti_son_ms() > 1_700_000_000_000,
+            "temas zamanı unix ms olarak tutulur: {}",
+            eklenti_son_ms()
+        );
         eklenti_goruldu_sifirla();
         assert!(!eklenti_goruldu_mu());
+        assert_eq!(eklenti_son_ms(), 0);
     }
 
     #[test]

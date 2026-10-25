@@ -5,7 +5,7 @@
 
 use crate::gizlenen::Gizlenenler;
 use crate::mantik::{self, AcilisEylemi, Aday, KucultmeKarari, MenuEylemi, PencereDurumu, Toplu};
-use crate::{ayar, davranis, gunluk, kayit, yollar};
+use crate::{ayar, davranis, gunluk, kayit, surec, yollar};
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -436,6 +436,21 @@ pub fn panikte_goster() {
 /// Logseq ana penceresi (görünür ya da tepsiye gizlenmiş) var mı; salt okur, her iş parçacığında güvenli.
 pub fn logseq_acik_mi() -> bool {
     !ana_listesi().is_empty()
+}
+
+/// `Logseq.exe` süreci var mı (ana pencere kapandıktan sonra da süren kapanış ya da gizli
+/// pencere ayırt edilir); süreç listesi alınamazsa var sayılır. Her iş parçacığında güvenli.
+pub fn logseq_surec_var() -> bool {
+    surec::calisiyor_mu(mantik::SUREC_ADI)
+}
+
+/// Ana Logseq sürecinin (ilk ana pencerenin sahibi) başlangıç anı, unix ms. Eklentinin "araca
+/// ulaştı" işareti bu andan eskiyse önceki Logseq örneğinden kalmadır.
+pub fn ana_baslangic_ms() -> Option<u64> {
+    let (h, _) = *ana_listesi().first()?;
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(h, &mut pid) };
+    surec::baslangic_ms(pid)
 }
 
 /// Görünür Logseq ana penceresi sayısı (oturumda gizli başlatma yoklaması); salt okur.

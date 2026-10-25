@@ -19,6 +19,8 @@ pub enum Red {
     YasakBicim,
     CiftAnahtar,
     DegerBeklenmedik,
+    /// Yazılacak çıktı yeniden ayrıştırılınca anahtar tam bir kez ve beklenen değerde değil.
+    Dogrulanamadi,
 }
 
 impl fmt::Display for Red {
@@ -33,6 +35,7 @@ impl fmt::Display for Red {
             Red::YasakBicim => "beklenmeyen biçim (#_ ya da ^)",
             Red::CiftAnahtar => "anahtar birden çok kez var",
             Red::DegerBeklenmedik => "anahtarın değeri true/false/nil değil",
+            Red::Dogrulanamadi => "yazılacak çıktı doğrulanamadı, yazılmadı",
         })
     }
 }
@@ -130,6 +133,14 @@ fn oge_sonu(metin: &str, i: usize) -> Result<usize, Red> {
             Some(b'_') => Err(Red::YasakBicim),
             Some(b'{') => kap_sonu(metin, i + 1),
             Some(b'"') => dizge_sonu(b, i + 1),
+            Some(b'#') => {
+                // Sembolik değer (##Inf, ##-Inf, ##NaN): etiket değil, tek simge.
+                let mut j = i + 2;
+                while j < b.len() && !sinirlayici(b[j]) {
+                    j += 1;
+                }
+                Ok(j)
+            }
             _ => {
                 // Etiket (#inst, #uuid ...): etiket sözcüğü + onu izleyen öğe.
                 let mut j = i + 1;
@@ -238,11 +249,31 @@ fn girinti(metin: &str, anahtar_bas: usize) -> &str {
 
 /// `:server/autostart` değerini `deger` yapar: anahtar varsa yalnız değer aralığı değişir,
 /// yoksa son elemandan sonra (kapanış `}`'den önce) satır sonu/girinti biçimine uyarak eklenir.
-/// Öbür baytlar olduğu gibi kalır. Beklenmeyen yapıda `Red`.
+/// Öbür baytlar olduğu gibi kalır. Beklenmeyen yapıda `Red`; mevcut değer `true`/`false`/`nil`
+/// değilse üstüne yazılmaz (`oku` ile aynı kural). Çıktı yazılmadan önce yeniden ayrıştırılır:
+/// anahtar tam bir kez ve beklenen değerde değilse `Red::Dogrulanamadi` (sigorta).
 pub fn ayarla(metin: &str, deger: bool) -> Result<String, Red> {
+    let yeni = ayarla_ham(metin, deger)?;
+    dogrula(&yeni, deger)?;
+    Ok(yeni)
+}
+
+/// `yeni` metninde `:server/autostart` tam bir kez ve `deger`de mi?
+fn dogrula(yeni: &str, deger: bool) -> Result<(), Red> {
+    let (elemanlar, _, _) = ayristir(yeni).map_err(|_| Red::Dogrulanamadi)?;
+    match deger_araligi(yeni, &elemanlar) {
+        Ok(Some((bas, bit))) if &yeni[bas..bit] == sozcuk(deger) => Ok(()),
+        _ => Err(Red::Dogrulanamadi),
+    }
+}
+
+fn ayarla_ham(metin: &str, deger: bool) -> Result<String, Red> {
     let (elemanlar, acilis, kapanis) = ayristir(metin)?;
     let yeni_deger = sozcuk(deger);
     if let Some((bas, bit)) = deger_araligi(metin, &elemanlar)? {
+        if !matches!(&metin[bas..bit], "true" | "false" | "nil") {
+            return Err(Red::DegerBeklenmedik);
+        }
         return Ok(format!("{}{yeni_deger}{}", &metin[..bas], &metin[bit..]));
     }
     let cift = format!("{ANAHTAR} {yeni_deger}");
@@ -343,6 +374,9 @@ mod testler {
             ("{:a 1 #_ :b :c 2}", Red::YasakBicim),
             ("{:a ^:meta {} :b 1}", Red::YasakBicim),
             ("{:a #inst}", Red::TekEleman),
+            ("{:server/autostart 1}", Red::DegerBeklenmedik),
+            ("{:server/autostart \"evet\"}", Red::DegerBeklenmedik),
+            ("{:server/autostart {:a 1}}", Red::DegerBeklenmedik),
         ];
         for (metin, red) in beklenen {
             assert_eq!(oku(metin), Err(red), "{metin:?}");
@@ -460,6 +494,62 @@ mod testler {
         let metin = "{:başlık \"Çalışma günlüğü ğüşiöç\" :c \\ş :server/autostart false}";
         let yeni = ayarla(metin, true).unwrap();
         assert_eq!(yeni, metin.replace("autostart false", "autostart true"));
+    }
+
+    #[test]
+    fn sembolik_degerler_etiket_degil_tek_oge_sayilir() {
+        // `##Inf`/`##NaN` etiket sanılıp sonraki öğeyi yutarsa eleman sayısı bozulur ve anahtar
+        // bulunamayıp ikinci kez eklenirdi.
+        let metin = "{:a ##Inf :b ##NaN :server/autostart true :c ##-Inf}";
+        assert_eq!(oku(metin), Ok(true));
+        let yeni = ayarla(metin, false).unwrap();
+        assert_eq!(yeni, metin.replace("autostart true", "autostart false"));
+        assert_eq!(yeni.matches(ANAHTAR).count(), 1, "yinelenen anahtar yok");
+        // Anahtar yokken de tek kez eklenir.
+        let eksik = "{:a ##Inf :b ##NaN}";
+        let eklenen = ayarla(eksik, true).unwrap();
+        assert_eq!(eklenen, "{:a ##Inf :b ##NaN :server/autostart true}");
+        assert_eq!(oku(&eklenen), Ok(true));
+        // Sondaki sembolik değer harita sonunu yutmaz.
+        assert_eq!(oku("{:a ##Inf}"), Ok(false));
+    }
+
+    #[test]
+    fn beklenmedik_degerin_ustune_yazilmaz() {
+        for metin in [
+            "{:server/autostart 1}",
+            "{:server/autostart \"evet\"}",
+            "{:server/autostart {:a 1}}",
+            "{:server/autostart :acik}",
+        ] {
+            for deger in [true, false] {
+                assert_eq!(
+                    ayarla(metin, deger),
+                    Err(Red::DegerBeklenmedik),
+                    "{metin:?} {deger}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sigorta_cift_eksik_ya_da_yanlis_degeri_reddeder() {
+        // Doğru çıktı.
+        assert_eq!(dogrula("{:a 1 :server/autostart true}", true), Ok(()));
+        assert_eq!(dogrula("{:server/autostart false}", false), Ok(()));
+        // Yinelenen anahtar, eksik anahtar, beklenenden başka değer ve çözülemeyen çıktı.
+        for (metin, deger) in [
+            ("{:server/autostart true :server/autostart true}", true),
+            ("{:a 1}", false),
+            ("{:server/autostart false}", true),
+            ("{:server/autostart true", true),
+        ] {
+            assert_eq!(
+                dogrula(metin, deger),
+                Err(Red::Dogrulanamadi),
+                "{metin:?} {deger}"
+            );
+        }
     }
 
     #[test]

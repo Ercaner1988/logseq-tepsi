@@ -43,6 +43,14 @@ pub fn api_url(baslat: bool) -> String {
     eklenti_url("apiSunucusu", if baslat { "baslat" } else { "durdur" })
 }
 
+/// Eklenti, ŞU ANKİ Logseq sürecinden sonra araca ulaştı mı? `son_temas_ms`: eklentinin araca son
+/// ulaştığı an (unix ms, 0 = hiç); `surec_baslangic_ms`: ana Logseq sürecinin başlangıcı (bilinmiyorsa
+/// yalnız temasın varlığına bakılır). Önceki Logseq örneğinden kalan temas bayat sayılır (Logseq
+/// kapanıp hızlıca yeniden açılsa da yeni eklenti yüklenmeden adres gönderilmez).
+pub fn eklenti_hazir_mi(son_temas_ms: u64, surec_baslangic_ms: Option<u64>) -> bool {
+    son_temas_ms != 0 && surec_baslangic_ms.is_none_or(|b| son_temas_ms >= b)
+}
+
 /// Logseq başlatıldıktan sonra adresi göndermek için en çok beklenecek süre.
 pub const NOT_TAVAN_MS: u64 = 60_000;
 /// Hazırlık yoklama aralığı.
@@ -151,5 +159,18 @@ mod testler {
         // Süre doldu, pencere var: son bir deneme.
         assert_eq!(not_adimi(1, false, NOT_TAVAN_MS), NotAdimi::Gonder);
         assert_eq!(NOT_TAVAN_MS, 60_000);
+    }
+    #[test]
+    fn eklenti_hazir_yalniz_su_anki_logseq_surecinden_sonra() {
+        // Hiç temas yok: hazır değil.
+        assert!(!eklenti_hazir_mi(0, Some(1_000)));
+        assert!(!eklenti_hazir_mi(0, None));
+        // Temas süreç başlangıcından sonra: hazır.
+        assert!(eklenti_hazir_mi(5_000, Some(4_000)));
+        assert!(eklenti_hazir_mi(4_000, Some(4_000)));
+        // Temas önceki Logseq örneğinden kalmış (yeni süreç daha geç başladı): bayat, hazır değil.
+        assert!(!eklenti_hazir_mi(3_000, Some(4_000)));
+        // Süreç başlangıcı bilinmiyorsa temasın varlığı yeter.
+        assert!(eklenti_hazir_mi(3_000, None));
     }
 }

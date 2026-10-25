@@ -73,6 +73,9 @@ pub struct Ayarlar {
     /// `api_otomatik_baslat` isteği Logseq açıkken verildi: kapanınca `configs.edn`e yazılır.
     /// Uçtan değiştirilemez (yalnız `ayar.toml`da).
     pub api_bekleyen: Option<bool>,
+    /// Dosyada tanınmayan anahtarlar (anahtar, TOML değer metni): ilk kayıtta düşmesin diye
+    /// olduğu gibi geri yazılır (daha yeni sürümün ayarı olabilir).
+    pub bilinmeyen: Vec<(String, String)>,
 }
 
 impl Default for Ayarlar {
@@ -87,6 +90,7 @@ impl Default for Ayarlar {
             not_hedefi: NotHedefi::Gunluk,
             kalinan_sayfa: true,
             api_bekleyen: None,
+            bilinmeyen: Vec::new(),
         }
     }
 }
@@ -188,7 +192,33 @@ pub fn satirlari_coz(govde: &str) -> Result<Vec<AyarDegeri>, String> {
     Ok(degerler)
 }
 
+/// `degerler` uygulanınca iki genel kısayol aynı tuşa düşecekse neden (kısayol değeri taşımayan
+/// gövdeler etkilenmez: elle bozulmuş dosyadaki eski çakışma başka ayarı engellemesin). Gövdedeki
+/// değerler birlikte uygulanır, yani yer değiştirme (takas) kabul edilir.
+pub fn cakisma_denetle(mevcut: &Ayarlar, degerler: &[AyarDegeri]) -> Result<(), String> {
+    let kisayola_dokunur = degerler.iter().any(|d| {
+        matches!(
+            d,
+            AyarDegeri::KisayolGosterGizle(_) | AyarDegeri::KisayolNot(_)
+        )
+    });
+    let mut yeni = mevcut.clone();
+    degerler.iter().for_each(|d| yeni.uygula(d));
+    if kisayola_dokunur && yeni.kisayollar_cakisiyor() {
+        return Err(format!(
+            "kisayol_goster_gizle ve kisayol_not aynı kısayol olamaz: {}",
+            yeni.kisayol_not
+        ));
+    }
+    Ok(())
+}
+
 impl Ayarlar {
+    /// İki genel kısayol da açık ve aynıysa çakışırlar (ikincisi kaydedilemez).
+    pub fn kisayollar_cakisiyor(&self) -> bool {
+        !self.kisayol_not.is_empty() && self.kisayol_goster_gizle == self.kisayol_not
+    }
+
     /// Değişikliği uygular; `BaslangictaCalis` dosyada tutulmadığı için yok sayılır.
     pub fn uygula(&mut self, d: &AyarDegeri) {
         match d {
@@ -270,11 +300,15 @@ impl Ayarlar {
             let b = toml::Value::String(ev(b).into());
             s.push_str(&format!("api_bekleyen = {b}\n"));
         }
+        for (a, d) in &self.bilinmeyen {
+            s.push_str(&format!("{} = {d}\n", toml::Value::String(a.clone())));
+        }
         s
     }
 
-    /// `ayar.toml` ayrıştırması: (ayarlar, uyarılar). Eksik anahtar varsayılan kalır; bilinmeyen
-    /// anahtar uyarıyla atlanır; sözdizimi ya da değer hatası `Err` (dosya bozuk sayılır).
+    /// `ayar.toml` ayrıştırması: (ayarlar, uyarılar). Eksik anahtar varsayılan kalır; tanınmayan
+    /// anahtar uyarıyla `bilinmeyen`de korunur (kayıtta aynen geri yazılır); sözdizimi ya da değer
+    /// hatası `Err` (dosya bozuk sayılır).
     pub fn toml_coz(metin: &str) -> Result<(Self, Vec<String>), String> {
         let tablo: toml::Table = metin.parse().map_err(|e| format!("TOML hatası: {e}"))?;
         let mut ayarlar = Self::default();
@@ -282,8 +316,11 @@ impl Ayarlar {
         for (anahtar, deger) in &tablo {
             if !DOSYA_ANAHTARLARI.contains(&anahtar.as_str()) {
                 uyarilar.push(format!(
-                    "ayar dosyasında bilinmeyen anahtar atlandı: {anahtar}"
+                    "ayar dosyasında tanınmayan anahtar korunuyor: {anahtar}"
                 ));
+                ayarlar
+                    .bilinmeyen
+                    .push((anahtar.clone(), deger.to_string()));
                 continue;
             }
             let metin = match deger {
@@ -315,43 +352,80 @@ fn yan_yol(dizin: &Path, ek: &str) -> PathBuf {
     dizin.join(format!("{DOSYA_ADI}{ek}"))
 }
 
-/// `dizin\ayar.toml` okur. Yok: varsayılanlar. Bozuk: `ayar.toml.bozuk` adıyla kenara alınır,
-/// varsayılanlarla çalışılır (kenara alınamazsa `yazilabilir = false`).
+/// Kenara alınan bozuk dosyanın adı: `ayar.toml.bozuk-<unix>` (aynı saniyede varsa `-2`, `-3` ...);
+/// eski bozuk dosyaların üstüne yazılmaz.
+fn bozuk_yolu(dizin: &Path, unix: u64) -> PathBuf {
+    let taban = format!(".bozuk-{unix}");
+    (1u32..)
+        .map(|n| {
+            yan_yol(
+                dizin,
+                &if n == 1 {
+                    taban.clone()
+                } else {
+                    format!("{taban}-{n}")
+                },
+            )
+        })
+        .find(|y| !y.exists())
+        .unwrap_or_else(|| yan_yol(dizin, &taban))
+}
+
+fn unix_saniye() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `dizin\ayar.toml` okur. Yok: varsayılanlar. Ayrıştırma/değer/UTF-8 hatası (içerik bozuk):
+/// `ayar.toml.bozuk-<unix>` adıyla kenara alınır, varsayılanlarla çalışılır (kenara alınamazsa
+/// `yazilabilir = false`). Okuma (G/Ç) hatası içeriğin bozuk olduğunu göstermez (kilit, izin):
+/// dosyaya dokunulmaz, varsayılanlarla çalışılır ve bu oturumda üstüne yazılmaz.
 pub fn yukle(dizin: &Path) -> Yukleme {
+    yukle_ile(dizin, |a, b| std::fs::rename(a, b))
+}
+
+fn yukle_ile(dizin: &Path, kenara_al: impl Fn(&Path, &Path) -> std::io::Result<()>) -> Yukleme {
     let dosya = dizin.join(DOSYA_ADI);
     let mut y = Yukleme {
         ayarlar: Ayarlar::default(),
         kayitlar: Vec::new(),
         yazilabilir: true,
     };
-    let sonuc = match std::fs::read_to_string(&dosya) {
-        Ok(metin) => Ayarlar::toml_coz(&metin),
+    let neden = match std::fs::read_to_string(&dosya) {
+        Ok(metin) => match Ayarlar::toml_coz(&metin) {
+            Ok((ayarlar, uyarilar)) => {
+                y.ayarlar = ayarlar;
+                y.kayitlar.extend(uyarilar);
+                return y;
+            }
+            Err(neden) => neden,
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             y.kayitlar
                 .push("ayar dosyası yok; varsayılanlarla çalışılıyor".into());
             return y;
         }
-        Err(e) => Err(format!("okunamadı: {e}")),
-    };
-    match sonuc {
-        Ok((ayarlar, uyarilar)) => {
-            y.ayarlar = ayarlar;
-            y.kayitlar.extend(uyarilar);
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => "UTF-8 değil".to_owned(),
+        Err(e) => {
+            y.yazilabilir = false;
+            y.kayitlar.push(format!(
+                "ayar dosyası okunamadı ({e}); dosyaya dokunulmadı, bu oturumda üstüne yazılmayacak, varsayılanlarla çalışılıyor"
+            ));
+            return y;
         }
-        Err(neden) => {
-            let bozuk = yan_yol(dizin, ".bozuk");
-            match std::fs::rename(&dosya, &bozuk) {
-                Ok(()) => y.kayitlar.push(format!(
-                    "ayar dosyası bozuk ({neden}); {} adıyla kenara alındı, varsayılanlarla çalışılıyor",
-                    bozuk.display()
-                )),
-                Err(e) => {
-                    y.yazilabilir = false;
-                    y.kayitlar.push(format!(
-                        "ayar dosyası bozuk ({neden}) ve kenara alınamadı ({e}); üstüne yazılmayacak, varsayılanlarla çalışılıyor"
-                    ));
-                }
-            }
+    };
+    let bozuk = bozuk_yolu(dizin, unix_saniye());
+    match kenara_al(&dosya, &bozuk) {
+        Ok(()) => y.kayitlar.push(format!(
+            "ayar dosyası bozuk ({neden}); {} adıyla kenara alındı, varsayılanlarla çalışılıyor",
+            bozuk.display()
+        )),
+        Err(e) => {
+            y.yazilabilir = false;
+            y.kayitlar.push(format!(
+                "ayar dosyası bozuk ({neden}) ve kenara alınamadı ({e}); üstüne yazılmayacak, varsayılanlarla çalışılıyor"
+            ));
         }
     }
     y
@@ -558,19 +632,18 @@ mod testler {
         let y = yukle(&d);
         assert_eq!(y.ayarlar, Ayarlar::default());
         assert!(y.yazilabilir);
-        assert!(y.kayitlar[0].contains("bozuk") && y.kayitlar[0].contains(".bozuk"));
+        assert!(y.kayitlar[0].contains("bozuk") && y.kayitlar[0].contains(".bozuk-"));
+        let kenar = bozuk_dosyalar(&d);
+        assert_eq!(kenar.len(), 1, "{kenar:?}");
         assert_eq!(
-            std::fs::read_to_string(d.join("ayar.toml.bozuk")).unwrap(),
+            std::fs::read_to_string(&kenar[0]).unwrap(),
             "tik = [bozuk",
             "bozuk içerik kaybolmamalı"
         );
         assert!(!d.join("ayar.toml").exists(), "asıl dosya kenara alındı");
         // Sonraki kayıt temiz dosya yazar, kenardakine dokunmaz.
         kaydet(&d, &y.ayarlar).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(d.join("ayar.toml.bozuk")).unwrap(),
-            "tik = [bozuk"
-        );
+        assert_eq!(std::fs::read_to_string(&kenar[0]).unwrap(), "tik = [bozuk");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -580,21 +653,161 @@ mod testler {
         std::fs::write(d.join("ayar.toml"), "tik = \"uc\"\n").unwrap();
         let y = yukle(&d);
         assert_eq!(y.ayarlar, Ayarlar::default());
-        assert!(d.join("ayar.toml.bozuk").exists());
+        assert_eq!(bozuk_dosyalar(&d).len(), 1);
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn kenara_alinamazsa_yazilabilir_false() {
-        // `.bozuk` adında bir DİZİN varsa üzerine rename başarısız olur (Windows ve Unix).
+        // Yeniden adlandırma başarısız olursa (kilit, izin) dosyaya hiç yazılmaz.
         let d = gecici("engel");
         std::fs::write(d.join("ayar.toml"), "tik = [").unwrap();
-        std::fs::create_dir(d.join("ayar.toml.bozuk")).unwrap();
-        std::fs::write(d.join("ayar.toml.bozuk").join("x"), "x").unwrap();
-        let y = yukle(&d);
+        let y = yukle_ile(&d, |_, _| Err(std::io::ErrorKind::PermissionDenied.into()));
         assert!(!y.yazilabilir, "{:?}", y.kayitlar);
         assert!(d.join("ayar.toml").exists(), "asıl dosya yerinde kalmalı");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn bozuk_dosyalar(d: &Path) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("ayar.toml.bozuk")
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn ikinci_bozuk_dosya_oncekinin_ustune_yazmaz() {
+        let d = gecici("bozuk2");
+        std::fs::write(d.join("ayar.toml"), "tik = [ilk").unwrap();
+        yukle(&d);
+        std::fs::write(d.join("ayar.toml"), "tik = [ikinci").unwrap();
+        yukle(&d);
+        let kenar = bozuk_dosyalar(&d);
+        assert_eq!(kenar.len(), 2, "iki ayrı kenar dosyası: {kenar:?}");
+        let icerikler: Vec<String> = kenar
+            .iter()
+            .map(|p| std::fs::read_to_string(p).unwrap())
+            .collect();
+        assert!(
+            icerikler.contains(&"tik = [ilk".to_owned()),
+            "{icerikler:?}"
+        );
+        assert!(
+            icerikler.contains(&"tik = [ikinci".to_owned()),
+            "{icerikler:?}"
+        );
+        // Ad zaman damgalıdır; aynı saniye çakışması sonek alır.
+        assert_eq!(bozuk_yolu(&d, 7), yan_yol(&d, ".bozuk-7"));
+        std::fs::write(yan_yol(&d, ".bozuk-7"), "x").unwrap();
+        assert_eq!(bozuk_yolu(&d, 7), yan_yol(&d, ".bozuk-7-2"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn okuma_hatasi_bozuk_sayilmaz_dosyaya_dokunulmaz() {
+        // `ayar.toml` bir DİZİN: okuma G/Ç hatası verir (içerik ayrıştırılamadı değil).
+        let d = gecici("io");
+        std::fs::create_dir(d.join("ayar.toml")).unwrap();
+        let y = yukle(&d);
+        assert!(
+            !y.yazilabilir,
+            "bu oturumda üstüne yazılmaz: {:?}",
+            y.kayitlar
+        );
+        assert_eq!(y.ayarlar, Ayarlar::default());
+        assert!(y.kayitlar[0].contains("okunamadı") && y.kayitlar[0].contains("dokunulmadı"));
+        assert!(d.join("ayar.toml").is_dir(), "dosya yerinde kalmalı");
+        assert!(bozuk_dosyalar(&d).is_empty(), "kenara alınmamalı");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn utf8_olmayan_dosya_bozuk_sayilir() {
+        let d = gecici("utf8");
+        std::fs::write(
+            d.join("ayar.toml"),
+            [0x74u8, 0x69, 0x6b, 0x20, 0x3d, 0xff, 0xfe],
+        )
+        .unwrap();
+        let y = yukle(&d);
+        assert!(y.yazilabilir);
+        assert_eq!(bozuk_dosyalar(&d).len(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn bilinmeyen_anahtarlar_ilk_kayitta_korunur() {
+        let d = gecici("bilinmeyen");
+        std::fs::write(
+            d.join("ayar.toml"),
+            "tik = \"cift\"\nyeni_ayar = \"x \\\"y\\\"\"\nsayi = 3\nliste = [1, 2]\n\"ozel ad\" = true\n[tablo]\na = 1\n",
+        )
+        .unwrap();
+        let y = yukle(&d);
+        assert_eq!(y.ayarlar.bilinmeyen.len(), 5, "{:?}", y.ayarlar.bilinmeyen);
+        assert_eq!(y.kayitlar.len(), 5, "her biri için uyarı");
+        // Değişiklik ve kayıt: bilinmeyenler dosyada kalır, bilinenler güncellenir.
+        let mut a = y.ayarlar.clone();
+        a.uygula(&AyarDegeri::Tik(Tik::Tek));
+        kaydet(&d, &a).unwrap();
+        let yazilan = std::fs::read_to_string(d.join("ayar.toml")).unwrap();
+        let tablo: toml::Table = yazilan.parse().unwrap();
+        assert_eq!(tablo["tik"].as_str(), Some("tek"));
+        assert_eq!(tablo["yeni_ayar"].as_str(), Some("x \"y\""));
+        assert_eq!(tablo["sayi"].as_integer(), Some(3));
+        assert_eq!(tablo["liste"].as_array().map(Vec::len), Some(2));
+        assert_eq!(tablo["ozel ad"].as_bool(), Some(true));
+        assert_eq!(tablo["tablo"]["a"].as_integer(), Some(1));
+        assert_eq!(yukle(&d).ayarlar, a, "ikinci yükleme aynı durum");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kisayol_cakismasi_denetlenir_takas_serbest() {
+        let a = Ayarlar::default(); // göster/gizle Ctrl+Alt+L, not Ctrl+Alt+N
+        assert!(!a.kisayollar_cakisiyor());
+        let ayni = satirlari_coz("kisayol_not=ctrl+alt+l").unwrap();
+        let e = cakisma_denetle(&a, &ayni).unwrap_err();
+        assert!(
+            e.contains("aynı kısayol") && e.contains("Ctrl+Alt+L"),
+            "{e}"
+        );
+        let ayni2 = satirlari_coz("kisayol_goster_gizle=Ctrl+Alt+N").unwrap();
+        assert!(cakisma_denetle(&a, &ayni2).is_err());
+        let ikisi =
+            satirlari_coz("kisayol_goster_gizle=Ctrl+Alt+X\nkisayol_not=Ctrl+Alt+X").unwrap();
+        assert!(cakisma_denetle(&a, &ikisi).is_err());
+        // Takas (ikisi birlikte yer değiştirir) ve kapatma serbest.
+        let takas =
+            satirlari_coz("kisayol_goster_gizle=Ctrl+Alt+N\nkisayol_not=Ctrl+Alt+L").unwrap();
+        assert_eq!(cakisma_denetle(&a, &takas), Ok(()));
+        let kapat = satirlari_coz("kisayol_not=\nkisayol_goster_gizle=").unwrap();
+        assert_eq!(cakisma_denetle(&a, &kapat), Ok(()));
+        // İki kısayol da boşsa çakışma sayılmaz.
+        assert!(!Ayarlar {
+            kisayol_goster_gizle: String::new(),
+            kisayol_not: String::new(),
+            ..Ayarlar::default()
+        }
+        .kisayollar_cakisiyor());
+        // Elle bozulmuş eski çakışma, kısayola dokunmayan ayarı engellemez.
+        let bozuk = Ayarlar {
+            kisayol_not: "Ctrl+Alt+L".into(),
+            ..Ayarlar::default()
+        };
+        assert!(bozuk.kisayollar_cakisiyor());
+        assert_eq!(
+            cakisma_denetle(&bozuk, &satirlari_coz("tik=cift").unwrap()),
+            Ok(())
+        );
     }
 
     #[test]

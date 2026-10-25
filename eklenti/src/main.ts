@@ -14,7 +14,8 @@ import {
   type Ortam,
 } from "./eylemler";
 import { kalinanaDon, rotaDegisti, yeniDurum, type DepoKatmani, type KalinanOrtami } from "./kalinan";
-import { anindaNotEylemi, type DefterApi, type SayfaKimligi } from "./not";
+import { anindaNotEylemi, type DefterApi, type NotOrtami, type SayfaKimligi } from "./not";
+import { API_BASLAT_ETIKETI, API_DURDUR_ETIKETI } from "./mesajlar";
 import { apiSunucusuEylemi } from "./sunucu";
 
 const VARSAYILAN_KISAYOL = "mod+shift+x";
@@ -125,6 +126,17 @@ const DEFTER: DefterApi = {
   blokDuzenle: (uuid) => logseq.Editor.editBlock(uuid),
 };
 
+/** Anında not başlayınca kalınan sayfa dönüşü iptal olur (açılışta gelen not ezilmesin). */
+function notOrtami(): NotOrtami {
+  return {
+    ...ortam(),
+    defter: DEFTER,
+    notBasladi: () => {
+      kalinanDurum.gezildi = true;
+    },
+  };
+}
+
 const KALINAN_ORTAMI: KalinanOrtami = {
   depo: DEPO_KATMANLARI,
   rota: {
@@ -161,7 +173,7 @@ async function main(): Promise<void> {
     },
     // Araç `logseq://...invokeCommand?action=plugin.logseq-tepsi.models.anindaNot&payload=<hedef>` ile çağırır.
     anindaNot(payload: unknown) {
-      void anindaNotEylemi({ ...ortam(), defter: DEFTER }, payload);
+      void anindaNotEylemi(notOrtami(), payload);
     },
     // `...models.apiSunucusu&payload=baslat|durdur` (aracın menüsü).
     apiSunucusu(payload: unknown) {
@@ -194,14 +206,14 @@ async function main(): Promise<void> {
   );
   logseq.App.registerCommandPalette(
     { key: "tepsi-aninda-not", label: "Tepsi: anında not" },
-    () => void anindaNotEylemi({ ...ortam(), defter: DEFTER }, undefined),
+    () => void anindaNotEylemi(notOrtami(), undefined),
   );
   logseq.App.registerCommandPalette(
-    { key: "tepsi-api-baslat", label: "Tepsi: API sunucusunu başlat" },
+    { key: "tepsi-api-baslat", label: API_BASLAT_ETIKETI },
     () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "baslat"),
   );
   logseq.App.registerCommandPalette(
-    { key: "tepsi-api-durdur", label: "Tepsi: API sunucusunu durdur" },
+    { key: "tepsi-api-durdur", label: API_DURDUR_ETIKETI },
     () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "durdur"),
   );
 

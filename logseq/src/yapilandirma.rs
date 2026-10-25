@@ -1,6 +1,7 @@
 //! `%APPDATA%\Logseq\configs.edn` dosya işleri: `:server/autostart` okuma ve yazma. Yazma:
-//! ilk yazımdan önce bir kez `configs.edn.tepsi-yedek`, atomik (geçici dosya + yeniden
-//! adlandırma). Hata iletileri dosya içeriği, yol ya da değer taşımaz (yalnız `ErrorKind`).
+//! ilk yazımdan önce bir kez `configs.edn.tepsi-yedek` (yedek de geçici dosya + yeniden
+//! adlandırmayla alınır, yarım yedek kalmaz), atomik (geçici dosya + yeniden adlandırma).
+//! Hata iletileri dosya içeriği, yol ya da değer taşımaz (yalnız `ErrorKind`).
 
 use crate::edn::{self, Red};
 use std::fmt;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 pub const DOSYA: &str = "configs.edn";
 pub const YEDEK_EKI: &str = ".tepsi-yedek";
 pub const GECICI_EKI: &str = ".tepsi-tmp";
+pub const YEDEK_GECICI_EKI: &str = ".tepsi-yedek-tmp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hata {
@@ -61,17 +63,17 @@ pub fn autostart_oku(dosya: &Path) -> Result<bool, Hata> {
     edn::oku(&metin_oku(dosya)?).map_err(Hata::Edn)
 }
 
-fn atomik_yaz(dosya: &Path, metin: &str) -> std::io::Result<()> {
-    let gecici = ek_yol(dosya, GECICI_EKI);
+/// `gecici` dosyaya yaz + `sync_all` + `hedef` üzerine yeniden adlandır: hedef ya hiç yoktur ya da tamdır.
+fn atomik_yaz(hedef: &Path, gecici: &Path, bayt: &[u8]) -> std::io::Result<()> {
     let yaz = || -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&gecici)?;
-        f.write_all(metin.as_bytes())?;
+        let mut f = std::fs::File::create(gecici)?;
+        f.write_all(bayt)?;
         f.sync_all()?;
-        std::fs::rename(&gecici, dosya)
+        std::fs::rename(gecici, hedef)
     };
     let sonuc = yaz();
     if sonuc.is_err() {
-        let _ = std::fs::remove_file(&gecici);
+        let _ = std::fs::remove_file(gecici);
     }
     sonuc
 }
@@ -87,9 +89,13 @@ pub fn autostart_yaz(dosya: &Path, deger: bool) -> Result<Yazim, Hata> {
     let yedek = ek_yol(dosya, YEDEK_EKI);
     let yedek_alindi = !yedek.exists();
     if yedek_alindi {
-        std::fs::copy(dosya, &yedek).map_err(|e| Hata::YedekAlinamadi(e.kind()))?;
+        // Yarım yedek kalmasın (ilk yedek sonra yeniden alınmaz): geçici dosya + yeniden adlandırma.
+        let bayt = std::fs::read(dosya).map_err(|e| Hata::YedekAlinamadi(e.kind()))?;
+        atomik_yaz(&yedek, &ek_yol(dosya, YEDEK_GECICI_EKI), &bayt)
+            .map_err(|e| Hata::YedekAlinamadi(e.kind()))?;
     }
-    atomik_yaz(dosya, &yeni).map_err(|e| Hata::Yazilamadi(e.kind()))?;
+    atomik_yaz(dosya, &ek_yol(dosya, GECICI_EKI), yeni.as_bytes())
+        .map_err(|e| Hata::Yazilamadi(e.kind()))?;
     Ok(Yazim::Yazildi { yedek_alindi })
 }
 
@@ -159,6 +165,34 @@ mod testler {
             sahte(),
             "yedek ilk yazımdaki içerikte kalır"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn yedek_gecici_dosya_uzerinden_atomik_alinir_yarim_yedek_kalmaz() {
+        let d = gecici("yedek-atomik");
+        let f = d.join(DOSYA);
+        std::fs::write(&f, sahte()).unwrap();
+        // Geçici yedek yolu bir DİZİN: yedek yazılamaz. Doğrudan kopya olsaydı hedef oluşurdu.
+        std::fs::create_dir(d.join("configs.edn.tepsi-yedek-tmp")).unwrap();
+        let sonuc = autostart_yaz(&f, true);
+        assert!(matches!(sonuc, Err(Hata::YedekAlinamadi(_))), "{sonuc:?}");
+        assert!(
+            !d.join("configs.edn.tepsi-yedek").exists(),
+            "yarım ya da eksik yedek bırakılmamalı"
+        );
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), sahte(), "dokunulmadı");
+        // Engel kalkınca tam yedek alınır, geçici dosya kalmaz.
+        std::fs::remove_dir(d.join("configs.edn.tepsi-yedek-tmp")).unwrap();
+        assert_eq!(
+            autostart_yaz(&f, true),
+            Ok(Yazim::Yazildi { yedek_alindi: true })
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("configs.edn.tepsi-yedek")).unwrap(),
+            sahte()
+        );
+        assert!(!d.join("configs.edn.tepsi-yedek-tmp").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 
