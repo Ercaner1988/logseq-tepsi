@@ -12,6 +12,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 
 /// Logseq'i göster/gizle kısayolu.
 pub const KIMLIK_GOSTER_GIZLE: i32 = 1;
+/// Anında not kısayolu.
+pub const KIMLIK_NOT: i32 = 2;
 
 /// Şu an kayıtlı kısayollar (kimlik, kısayol).
 static KAYITLI: Mutex<Vec<(i32, Kisayol)>> = Mutex::new(Vec::new());

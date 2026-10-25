@@ -4,7 +4,7 @@
 use crate::sunucu::Saglayici;
 use crate::tepsi::{WM_UC_AYAR, WM_UC_GIZLE, WM_UC_GOSTER};
 use crate::uc::Is;
-use crate::{ayarlar, pencere};
+use crate::{api, ayarlar, pencere};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
@@ -28,6 +28,7 @@ pub fn baslat(ileti_penceresi: isize) {
         surum: env!("CARGO_PKG_VERSION"),
         durum: pencere::durum_ozeti,
         ayar_metni: ayarlar::govde,
+        api_acik: api::acik_mi,
     };
     crate::sunucu::baslat(sag, devret);
 }

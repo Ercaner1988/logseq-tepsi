@@ -8,6 +8,7 @@ use crate::uc::{self, Is, Yanit};
 use logseq_tepsi_cekirdek::gunluk;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,23 @@ const DURUM_ONBELLEK_MS: u64 = 500;
 static DURUM_ONBELLEGI: Mutex<ZamanliOnbellek<(usize, bool)>> =
     Mutex::new(ZamanliOnbellek::yeni(DURUM_ONBELLEK_MS));
 
+/// `api=` yoklamasının ömrü (TCP bağlantısı; sürekli yoklamada her istekte yapılmasın).
+const API_ONBELLEK_MS: u64 = 1_000;
+
+static API_ONBELLEGI: Mutex<ZamanliOnbellek<bool>> =
+    Mutex::new(ZamanliOnbellek::yeni(API_ONBELLEK_MS));
+
+/// Eklenti (izinli Origin ile yetkili istek) araca ulaştı mı? Logseq kapanınca sıfırlanır.
+static EKLENTI_GORULDU: AtomicBool = AtomicBool::new(false);
+
+pub fn eklenti_goruldu_mu() -> bool {
+    EKLENTI_GORULDU.load(Ordering::Relaxed)
+}
+
+pub fn eklenti_goruldu_sifirla() {
+    EKLENTI_GORULDU.store(false, Ordering::Relaxed);
+}
+
 /// Sunucunun çağıran tarafından beslendiği veriler.
 #[derive(Clone, Copy)]
 pub struct Saglayici {
@@ -25,6 +43,8 @@ pub struct Saglayici {
     pub durum: fn() -> (usize, bool),
     /// `GET /ayar` gövdesi (`anahtar=değer` satırları).
     pub ayar_metni: fn() -> String,
+    /// Logseq API sunucusu çalışıyor mu (`/durum` `api=` satırı; önbelleklenir).
+    pub api_acik: fn() -> bool,
 }
 
 /// Başlangıçtan bu yana ms (tekdüze saat; önbellek bunu `simdi_ms` olarak alır).
@@ -36,6 +56,12 @@ fn simdi_ms() -> u64 {
 /// `uret` sonucu, `DURUM_ONBELLEK_MS` içinde yeniden hesaplanmaz.
 fn durum_onbellekli_ile(uret: impl FnOnce() -> (usize, bool)) -> (usize, bool) {
     let mut o = DURUM_ONBELLEGI.lock().unwrap_or_else(|e| e.into_inner());
+    o.al(simdi_ms(), uret)
+}
+
+/// `uret` sonucu (API sunucusu yoklaması), `API_ONBELLEK_MS` içinde yeniden yapılmaz.
+fn api_onbellekli_ile(uret: impl FnOnce() -> bool) -> bool {
+    let mut o = API_ONBELLEGI.lock().unwrap_or_else(|e| e.into_inner());
     o.al(simdi_ms(), uret)
 }
 
@@ -165,13 +191,18 @@ fn yanit_hazirla(akim: &mut TcpStream, sag: Saglayici) -> Option<Yanit> {
     } else {
         Vec::new()
     };
-    Some(uc::karar_ver(
+    let mut yanit = uc::karar_ver(
         &istek,
         &govde,
         sag.surum,
         || durum_onbellekli_ile(sag.durum),
         sag.ayar_metni,
-    ))
+    );
+    if yanit.kod < 300 && uc::eklenti_istegi_mi(&istek) {
+        EKLENTI_GORULDU.store(true, Ordering::Relaxed);
+    }
+    uc::durum_yanitina_api_ekle(&istek, &mut yanit, || api_onbellekli_ile(sag.api_acik));
+    Some(yanit)
 }
 
 fn baglanti(mut akim: TcpStream, sag: Saglayici, devret: &impl Fn(&Is) -> bool) {
@@ -206,6 +237,7 @@ mod testler {
         surum: "sinama",
         durum: || (0, false),
         ayar_metni: || "tik=tek\n".into(),
+        api_acik: || false,
     };
 
     /// Yerel soketle gerçek bağlantı döngüsü: ham istek parçalarını (aralarında kısa bekleme)
@@ -386,6 +418,52 @@ mod testler {
         let (y, is) = yanit_al_parcali(&[&ayar_istegi("tik=cift\n")], false, false);
         assert!(y.starts_with("HTTP/1.1 503"), "{y}");
         assert_eq!(is.len(), 1);
+    }
+
+    #[test]
+    fn api_yoklamasi_onbellekli() {
+        let sayac = std::cell::Cell::new(0);
+        for _ in 0..20 {
+            let d = api_onbellekli_ile(|| {
+                sayac.set(sayac.get() + 1);
+                false
+            });
+            assert!(!d);
+        }
+        assert!(sayac.get() <= 2, "yoklama {} kez yapıldı", sayac.get());
+    }
+
+    #[test]
+    fn durum_yaniti_api_satirini_tasir_eklenti_istegi_bayragi_yalniz_origin_ile() {
+        // Bayrağa dokunan tek sınama (paralel koşuda çakışmasın diye iki aşama birlikte).
+        eklenti_goruldu_sifirla();
+        let curl = "GET /durum HTTP/1.1\r\nHost: 127.0.0.1:47123\r\nX-Logseq-Tepsi: 1\r\n\r\n";
+        let y = yanit_al(curl.as_bytes(), false);
+        // Önbellek süreç geneli (öbür sınamalar `(3, true)` yazmış olabilir): yalnız biçim.
+        let govde = y.split("\r\n\r\n").nth(1).unwrap();
+        let satirlar: Vec<&str> = govde.lines().collect();
+        assert_eq!(satirlar.len(), 4, "{y}");
+        assert_eq!(satirlar[0], "logseq-tepsi sinama");
+        assert!(satirlar[1].starts_with("gizli=") && satirlar[2].starts_with("logseq="));
+        assert_eq!(satirlar[3], "api=kapali");
+        assert!(
+            !eklenti_goruldu_mu(),
+            "Origin'siz (curl) istek eklenti sayılmaz"
+        );
+        let yetkisiz =
+            "GET /durum HTTP/1.1\r\nHost: 127.0.0.1:47123\r\nOrigin: lsp://logseq.io\r\n\r\n";
+        let y = yanit_al(yetkisiz.as_bytes(), false);
+        assert!(y.starts_with("HTTP/1.1 403"), "{y}");
+        assert!(!eklenti_goruldu_mu(), "yetkisiz istek bayrağı kurmaz");
+        let eklenti = "GET /ayar HTTP/1.1\r\nHost: 127.0.0.1:47123\r\nX-Logseq-Tepsi: 1\r\nOrigin: lsp://logseq.io\r\n\r\n";
+        let y = yanit_al(eklenti.as_bytes(), false);
+        assert!(y.starts_with("HTTP/1.1 200"), "{y}");
+        assert!(
+            eklenti_goruldu_mu(),
+            "izinli Origin + yetki eklenti sayılır"
+        );
+        eklenti_goruldu_sifirla();
+        assert!(!eklenti_goruldu_mu());
     }
 
     #[test]

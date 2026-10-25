@@ -29,6 +29,7 @@ name = "logseq-tepsi"
 version = "0.1.0"
 dependencies = [
  "logseq-tepsi-cekirdek",
+ "logseq-tepsi-logseq",
  "logseq-tepsi-sistem",
  "logseq-tepsi-uc",
  "windows-sys",
@@ -40,6 +41,10 @@ version = "0.1.0"
 dependencies = [
  "toml",
 ]
+
+[[package]]
+name = "logseq-tepsi-logseq"
+version = "0.1.0"
 
 [[package]]
 name = "logseq-tepsi-sistem"

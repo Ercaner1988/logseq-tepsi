@@ -5,7 +5,10 @@
 use crate::ayar::AyarDegeri;
 use crate::mantik::{self, KucultmeKarari, MenuEylemi, TepsiOlayi, MENU};
 use crate::menu::{self, Tur};
-use crate::{ayar, ayarlar, davranis, gunluk, kisayol, kurulum, pencere, soluk, tus, uc_sunucu};
+use crate::{
+    api, ayar, ayarlar, davranis, gunluk, kisayol, kurulum, not_gonder, pencere, soluk, sunucu,
+    tus, uc_sunucu,
+};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
@@ -64,6 +67,8 @@ static SIMGE_SOLUK: AtomicIsize = AtomicIsize::new(0);
 static LOGSEQ_DURUMU: AtomicU8 = AtomicU8::new(0);
 static KANCA: AtomicIsize = AtomicIsize::new(0);
 static SIMGE_TAMAM: AtomicBool = AtomicBool::new(false);
+/// Logseq kaç ardışık durum yoklamasıdır kapalı (0: açık).
+static KAPALI_YOKLAMA: AtomicU32 = AtomicU32::new(0);
 static BAKIM_DENEME: AtomicU32 = AtomicU32::new(0);
 static SON_TIK_MS: AtomicU64 = AtomicU64::new(u64::MAX);
 /// Oturumda gizli başlatma yoklamasının başlangıcı (`GetTickCount64`, ms).
@@ -107,7 +112,7 @@ fn bildirim(hwnd: HWND) -> NOTIFYICONDATAW {
         acik,
         KANCA.load(Ordering::Relaxed) != 0,
         &ayar::guncel(),
-        tus::hatali_mi(tus::KIMLIK_GOSTER_GIZLE),
+        tus::hatali_mi(tus::KIMLIK_GOSTER_GIZLE) || tus::hatali_mi(tus::KIMLIK_NOT),
     );
     for (i, c) in ipucu.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
         nid.szTip[i] = c;
@@ -145,8 +150,23 @@ fn durum_oku() -> bool {
     acik
 }
 
+/// Durum zamanlayıcısının her adımında (yalnız o; tıklamalar saymaz) Logseq kapalı kaldıkça sayar. Kapalıyken eklenti-hazır işareti sıfırlanır (yeniden açılınca
+/// eklenti kendini yeniden gösterir) ve bekleyen `api_otomatik_baslat` yazılır (kapanış
+/// yazımı bitsin diye `KAPALI_YOKLAMA_SAYISI` ardışık yoklama sonra).
+fn kapali_yoklama(acik: bool) {
+    if acik {
+        KAPALI_YOKLAMA.store(0, Ordering::Relaxed);
+        return;
+    }
+    sunucu::eklenti_goruldu_sifirla();
+    let n = (KAPALI_YOKLAMA.load(Ordering::Relaxed) + 1).min(api::KAPALI_YOKLAMA_SAYISI);
+    KAPALI_YOKLAMA.store(n, Ordering::Relaxed);
+    ayarlar::bekleyen_api_uygula(n);
+}
+
 /// Durum değiştiyse (ya da hiç yazılmadıysa) simgeyi ve ipucunu tazeler; yoksa dokunmaz.
-fn durum_tazele(hwnd: HWND) {
+/// Logseq şu an açık mı döner.
+fn durum_tazele(hwnd: HWND) -> bool {
     let onceki = match LOGSEQ_DURUMU.load(Ordering::Relaxed) {
         0 => None,
         v => Some(v == 2),
@@ -156,6 +176,7 @@ fn durum_tazele(hwnd: HWND) {
         durum_oku();
         simge_koy(hwnd);
     }
+    simdi
 }
 
 /// Küçültme kancasını kurar; başarısızsa günlüğe yazar (ipucu uyarır, bakım yeniden dener).
@@ -213,34 +234,53 @@ fn bakim(hwnd: HWND) {
     bakim_planla(hwnd);
 }
 
-/// "Ayarlar" alt menüsünü model (`menu::ayar_maddeleri`) üzerinden kurar ve `menu`ye ekler.
-unsafe fn ayar_alt_menusu(menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU) {
-    let alt = CreatePopupMenu();
-    let maddeler = menu::ayar_maddeleri(&ayar::guncel(), kurulum::baslangic_var_mi());
-    for m in &maddeler {
-        match m.tur {
-            Tur::Ayirici => AppendMenuW(alt, MF_SEPARATOR, 0, null()),
-            Tur::Onay(isaretli) => {
-                let bayrak = if isaretli {
-                    MF_STRING | MF_CHECKED
-                } else {
-                    MF_STRING
-                };
-                AppendMenuW(alt, bayrak, m.kimlik, genis(&m.etiket).as_ptr())
+/// Menü modelinin (`menu::Madde`) maddelerini `hedef` menüye ekler; radyo işaretleri sonda.
+unsafe fn maddeleri_ekle(
+    hedef: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    maddeler: &[menu::Madde],
+) {
+    for m in maddeler {
+        let bayrak = match m.tur {
+            Tur::Ayirici => {
+                AppendMenuW(hedef, MF_SEPARATOR, 0, null());
+                continue;
             }
-            Tur::Radyo { .. } => AppendMenuW(alt, MF_STRING, m.kimlik, genis(&m.etiket).as_ptr()),
+            Tur::Onay(true) => MF_STRING | MF_CHECKED,
+            Tur::Eylem { etkin: false } => MF_STRING | MF_GRAYED,
+            Tur::Onay(false) | Tur::Radyo { .. } | Tur::Eylem { etkin: true } => MF_STRING,
         };
+        AppendMenuW(hedef, bayrak, m.kimlik, genis(&m.etiket).as_ptr());
     }
-    for m in &maddeler {
+    for m in maddeler {
         if let Tur::Radyo {
             isaretli: true,
             ilk,
             son,
         } = m.tur
         {
-            CheckMenuRadioItem(alt, ilk as u32, son as u32, m.kimlik as u32, MF_BYCOMMAND);
+            CheckMenuRadioItem(hedef, ilk as u32, son as u32, m.kimlik as u32, MF_BYCOMMAND);
         }
     }
+}
+
+/// Menü açılırken öğrenilen gerçek durumlar (başlangıç kısayolu, `configs.edn`, API yoklaması).
+fn dis_durum() -> menu::DisDurum {
+    let logseq_acik = pencere::logseq_acik_mi();
+    menu::DisDurum {
+        baslangicta: kurulum::baslangic_var_mi(),
+        api_otomatik: ayarlar::api_gercek(),
+        api_acik: logseq_acik && api::acik_mi(),
+        logseq_acik,
+    }
+}
+
+/// "Ayarlar" alt menüsünü model (`menu::ayar_maddeleri_tam`) üzerinden kurar ve `menu`ye ekler.
+unsafe fn ayar_alt_menusu(
+    menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
+    dis: &menu::DisDurum,
+) {
+    let alt = CreatePopupMenu();
+    maddeleri_ekle(alt, &menu::ayar_maddeleri_tam(&ayar::guncel(), dis));
     AppendMenuW(
         menu,
         MF_POPUP | MF_STRING,
@@ -266,6 +306,7 @@ fn kisayol_tazele(hwnd: HWND) {
         tus::KIMLIK_GOSTER_GIZLE,
         kisayol::ayardan(&ayar.kisayol_goster_gizle),
     );
+    tus::ayarla(hwnd, tus::KIMLIK_NOT, kisayol::ayardan(&ayar.kisayol_not));
 }
 
 /// Oturumda gizli başlatma: Logseq kapalıysa başlatır, ana penceresi görünene kadar (en çok
@@ -317,7 +358,9 @@ fn menu_ac(hwnd: HWND) {
                 }
             }
         }
-        ayar_alt_menusu(menu);
+        let dis = dis_durum();
+        maddeleri_ekle(menu, &menu::ana_ek_maddeleri(&dis));
+        ayar_alt_menusu(menu, &dis);
         let mut nokta = POINT { x: 0, y: 0 };
         GetCursorPos(&mut nokta);
         SetForegroundWindow(hwnd);
@@ -333,8 +376,12 @@ fn menu_ac(hwnd: HWND) {
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
         let Some(eylem) = mantik::menu_eylemi(secim as usize) else {
-            let baslangicta = kurulum::baslangic_var_mi();
-            if let Some(d) = menu::secim_degeri(secim as usize, &ayar::guncel(), baslangicta) {
+            if let Some(e) = menu::ana_secim(secim as usize, &dis) {
+                match e {
+                    menu::AnaEylem::AnindaNot => not_gonder::aninda_not(hwnd),
+                    menu::AnaEylem::ApiSunucusu(baslat) => not_gonder::api_gonder(baslat),
+                }
+            } else if let Some(d) = menu::secim_degeri_tam(secim as usize, &ayar::guncel(), &dis) {
                 ayar_uygula(hwnd, &[d]);
             }
             return;
@@ -421,17 +468,25 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
             0
         }
         WM_HOTKEY => {
-            if w as i32 == tus::KIMLIK_GOSTER_GIZLE {
-                pencere::tikla();
-                durum_tazele(hwnd);
+            match w as i32 {
+                tus::KIMLIK_GOSTER_GIZLE => {
+                    pencere::tikla();
+                    durum_tazele(hwnd);
+                }
+                tus::KIMLIK_NOT => not_gonder::aninda_not(hwnd),
+                _ => {}
             }
             0
         }
         WM_TIMER => {
             match w {
                 ZAMANLAYICI_OTURUM => oturum_yokla(hwnd),
+                not_gonder::ZAMANLAYICI_NOT => not_gonder::yokla(hwnd),
                 ZAMANLAYICI_BAKIM => bakim(hwnd),
-                ZAMANLAYICI_DURUM => durum_tazele(hwnd),
+                ZAMANLAYICI_DURUM => {
+                    let acik = durum_tazele(hwnd);
+                    kapali_yoklama(acik);
+                }
                 ZAMANLAYICI_KUCULT => {
                     KillTimer(hwnd, ZAMANLAYICI_KUCULT);
                     let bekleyen: Vec<(isize, u32)> = std::mem::take(

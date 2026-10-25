@@ -253,8 +253,13 @@ pub fn goster(hwnd: HWND) {
     kume().cikar(hwnd as isize);
 }
 
-fn surec_olustur(yol: &str, breakaway: bool) -> std::io::Result<std::process::Child> {
+fn surec_olustur(
+    yol: &str,
+    argumanlar: &[&str],
+    breakaway: bool,
+) -> std::io::Result<std::process::Child> {
     std::process::Command::new(yol)
+        .args(argumanlar)
         .env_remove("ELECTRON_RUN_AS_NODE")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -269,15 +274,29 @@ pub fn baslat() {
         gunluk::yaz("Logseq baslatilamadi: Logseq.exe yolu bulunamadi");
         return;
     };
-    let sonuc = surec_olustur(&yol, true).or_else(|e| {
+    surec_calistir(&yol, &[], "baslatildi", "baslatilamadi");
+}
+
+/// `Logseq.exe <adres>`: çalışan örneğe `logseq://` adresi iletir (örnek `second-instance` ile
+/// alır, ikinci süreç hemen çıkar). Logseq kapalıyken çağrılmamalı: eklenti yüklenmeden gelen
+/// adres sessizce kaybolur.
+pub fn adres_gonder(adres: &str) {
+    match logseq_yolu() {
+        Some(yol) => surec_calistir(&yol, &[adres], "adres gonderildi", "adres gonderilemedi"),
+        None => gunluk::yaz("Logseq adresi gonderilemedi: Logseq.exe yolu bulunamadi"),
+    }
+}
+
+fn surec_calistir(yol: &str, argumanlar: &[&str], tamam: &str, hata: &str) {
+    let sonuc = surec_olustur(yol, argumanlar, true).or_else(|e| {
         gunluk::yaz(&format!(
             "Logseq iş nesnesinden kopuk baslatilamadi ({e}); bayraksiz deneniyor"
         ));
-        surec_olustur(&yol, false)
+        surec_olustur(yol, argumanlar, false)
     });
     match sonuc {
-        Ok(_) => gunluk::yaz(&format!("Logseq baslatildi: {yol}")),
-        Err(e) => gunluk::yaz(&format!("Logseq baslatilamadi ({yol}): {e}")),
+        Ok(_) => gunluk::yaz(&format!("Logseq {tamam}: {yol} {}", argumanlar.join(" "))),
+        Err(e) => gunluk::yaz(&format!("Logseq {hata} ({yol}): {e}")),
     }
 }
 
@@ -293,6 +312,16 @@ fn hepsini_goster_uygula() {
     let p = ana_pencereler();
     let sira = mantik::gosterilecekler(&p, &kume());
     sira.into_iter().for_each(|h| goster(h as HWND));
+}
+
+/// Menüdeki "Göster" gibi: pencere varsa gösterip öne getirir (gizliyse tepsiden çıkarır),
+/// Logseq kapalıysa başlatır. Logseq zaten açıktıysa `true`.
+pub fn goster_veya_baslat() -> bool {
+    let p = ana_pencereler();
+    let t = mantik::goster_toplu(&p, &kume());
+    let acikti = !matches!(t, Toplu::Baslat);
+    toplu_uygula(t);
+    acikti
 }
 
 /// Tepsi simgesine sol tık: görünür varsa gizle, yoksa en son gizleneni göster; Logseq kapalıysa

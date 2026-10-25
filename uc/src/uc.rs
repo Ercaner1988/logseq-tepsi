@@ -196,6 +196,25 @@ pub fn durum_govdesi(surum: &str, gizli: usize, logseq_acik: bool) -> String {
     format!("logseq-tepsi {surum}\ngizli={gizli}\nlogseq={logseq}\n")
 }
 
+/// `GET /durum` gövdesinin sonuna eklenen satır (ilk üç satırın sözleşmesi bozulmaz).
+pub fn api_satiri(api_acik: bool) -> String {
+    format!("api={}\n", if api_acik { "acik" } else { "kapali" })
+}
+
+/// Başarılı `GET /durum` yanıtına `api=` satırını ekler; `api` yalnız bu durumda çağrılır
+/// (TCP yoklaması yetkisiz ya da başka isteklerde yapılmaz).
+pub fn durum_yanitina_api_ekle(istek: &Istek, y: &mut Yanit, api_acik: impl FnOnce() -> bool) {
+    if istek.metot == "GET" && istek.yol == "/durum" && y.kod == 200 {
+        y.govde.push_str(&api_satiri(api_acik()));
+    }
+}
+
+/// İstek eklentiden mi geliyor (izinli `Origin` + yetkili)? Eklenti yüklenip araca ulaşınca
+/// Logseq'e adres göndermek güvenli olur.
+pub fn eklenti_istegi_mi(istek: &Istek) -> bool {
+    istek.baslik("origin").is_some() && yetkili_mi(istek)
+}
+
 /// OPTIONS dışı isteğin yetkisi tamam mı (Host, Origin, özel başlık)? Sunucu gövdeyi yalnız
 /// yetkili istek için okur; karar yine `karar_ver`dedir.
 pub fn yetkili_mi(istek: &Istek) -> bool {
@@ -712,6 +731,63 @@ mod testler {
             durum_govdesi("0.1.0", 0, false),
             "logseq-tepsi 0.1.0\ngizli=0\nlogseq=kapali\n"
         );
+    }
+
+    #[test]
+    fn durum_yanitina_api_satiri_yalniz_basarili_get_durumda_eklenir() {
+        let govde = |i: &Istek| {
+            let mut y = sor(i);
+            let onceki = y.govde.clone();
+            let cagrildi = std::cell::Cell::new(false);
+            durum_yanitina_api_ekle(i, &mut y, || {
+                cagrildi.set(true);
+                true
+            });
+            (onceki, y.govde, cagrildi.get())
+        };
+        let (onceki, yeni, cagrildi) = govde(&istek("GET", "/durum", &[YETKI]));
+        assert!(cagrildi);
+        assert_eq!(yeni, format!("{onceki}api=acik\n"));
+        assert_eq!(
+            yeni, "logseq-tepsi 9.9.9\ngizli=2\nlogseq=acik\napi=acik\n",
+            "ilk üç satır sözleşmesi aynen, api satırı sonda"
+        );
+        // Yetkisiz (403), başka yol ve başka metot: ne satır eklenir ne yoklama yapılır.
+        for i in [
+            istek("GET", "/durum", &[]),
+            istek("GET", "/ayar", &[YETKI]),
+            istek("POST", "/durum", &[YETKI]),
+            istek("GET", "/gizle", &[YETKI]),
+        ] {
+            let (onceki, yeni, cagrildi) = govde(&i);
+            assert_eq!(onceki, yeni, "{:?}", i.yol);
+            assert!(!cagrildi, "{:?} için TCP yoklaması yapılmamalı", i.yol);
+        }
+        assert_eq!(api_satiri(false), "api=kapali\n");
+    }
+
+    #[test]
+    fn eklenti_istegi_izinli_origin_ve_yetki_ister() {
+        let eklenti = istek("GET", "/ayar", &[YETKI, ("Origin", "lsp://logseq.io")]);
+        assert!(eklenti_istegi_mi(&eklenti));
+        assert!(
+            !eklenti_istegi_mi(&istek("GET", "/ayar", &[YETKI])),
+            "Origin yok (curl)"
+        );
+        assert!(!eklenti_istegi_mi(&istek(
+            "GET",
+            "/ayar",
+            &[YETKI, ("Origin", "https://kotu.example")]
+        )));
+        assert!(
+            !eklenti_istegi_mi(&istek("GET", "/ayar", &[("Origin", "lsp://logseq.io")])),
+            "özel başlık yok"
+        );
+        assert!(!eklenti_istegi_mi(&istek(
+            "OPTIONS",
+            "/ayar",
+            &[YETKI, ("Origin", "lsp://logseq.io")]
+        )));
     }
 
     // --- yanıt baytları ---

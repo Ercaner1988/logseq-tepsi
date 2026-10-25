@@ -9,4 +9,5 @@ pub mod kisayol;
 pub mod komut;
 pub mod mantik;
 pub mod menu;
+pub mod not;
 pub mod yollar;

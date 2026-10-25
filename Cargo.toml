@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "cekirdek", "uc", "sistem"]
-default-members = [".", "cekirdek", "uc", "sistem"]
+members = [".", "cekirdek", "uc", "sistem", "logseq"]
+default-members = [".", "cekirdek", "uc", "sistem", "logseq"]
 
 [package]
 name = "logseq-tepsi"
@@ -13,6 +13,7 @@ description = "Logseq masaüstü uygulamasını küçültünce sistem tepsisine 
 logseq-tepsi-cekirdek = { path = "cekirdek" }
 logseq-tepsi-uc = { path = "uc" }
 logseq-tepsi-sistem = { path = "sistem" }
+logseq-tepsi-logseq = { path = "logseq" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
