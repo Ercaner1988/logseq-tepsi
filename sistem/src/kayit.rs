@@ -1,7 +1,7 @@
 //! Kayıt defteri okuma/yazma yardımcıları (Win32). Ayrıştırma mantığı `yollar`/`kurulum`
 //! modüllerinde saf kodda; burası yalnız ince bir kabuk.
 
-use crate::yollar::{KayitAdayi, KayitDegerleri};
+use logseq_tepsi_cekirdek::yollar::{KayitAdayi, KayitDegerleri};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW,
@@ -17,7 +17,7 @@ fn genis(s: &str) -> Vec<u16> {
 }
 
 /// REG_SZ/REG_EXPAND_SZ (genişletilmiş) değeri okur; yoksa `None`.
-pub fn deger_oku(kok: HKEY, alt: &str, ad: &str) -> Option<String> {
+fn deger_oku(kok: HKEY, alt: &str, ad: &str) -> Option<String> {
     let (alt_g, ad_g) = (genis(alt), genis(ad));
     let alt_p = if alt.is_empty() {
         null()
@@ -96,7 +96,7 @@ pub fn uninstall_adaylari() -> Vec<KayitAdayi> {
         for anahtar in alt_anahtarlar(kok, yol) {
             let alt = format!(r"{yol}\{anahtar}");
             let ad = deger_oku(kok, &alt, "DisplayName");
-            if !crate::yollar::logseq_girdisi_mi(&anahtar, ad.as_deref()) {
+            if !logseq_tepsi_cekirdek::yollar::logseq_girdisi_mi(&anahtar, ad.as_deref()) {
                 continue;
             }
             let d = KayitDegerleri {
@@ -107,7 +107,7 @@ pub fn uninstall_adaylari() -> Vec<KayitAdayi> {
                 gorunen_surum: deger_oku(kok, &alt, "DisplayVersion"),
                 anahtar_adi: anahtar,
             };
-            sonuc.extend(crate::yollar::surumlu_kayit_adaylari(&d));
+            sonuc.extend(logseq_tepsi_cekirdek::yollar::surumlu_kayit_adaylari(&d));
         }
     }
     sonuc

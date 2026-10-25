@@ -3,7 +3,7 @@
 //! Görev Zamanlayıcı kullanılmaz; yalnız kendi eklediği şeyleri siler.
 
 use crate::kayit;
-use crate::yollar::{
+use logseq_tepsi_cekirdek::yollar::{
     baslangic_kisayolu, kisayol_karari, sema_anahtari, sema_degerleri, url_komutu, KisayolKarari,
     SEMA,
 };

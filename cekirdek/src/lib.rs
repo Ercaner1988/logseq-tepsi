@@ -5,7 +5,4 @@ pub mod gizlenen;
 pub mod gunluk;
 pub mod komut;
 pub mod mantik;
-pub mod onbellek;
-pub mod sunucu;
-pub mod uc;
 pub mod yollar;

@@ -1,0 +1,9 @@
+[package]
+name = "logseq-tepsi-uc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "logseq-tepsi'nin yerel ucu (eklenti kanalı): HTTP ayrıştırıcı, yetki kararı, TCP sunucusu. Win32'ye bağımlı değildir."
+
+[dependencies]
+logseq-tepsi-cekirdek = { path = "../cekirdek" }

@@ -1,9 +1,7 @@
 #![windows_subsystem = "windows"]
 //! Logseq'i küçültünce sistem tepsisine gizler. Ayrıntı: README.md.
 
-mod kayit;
 mod konsol;
-mod kurulum;
 mod pencere;
 mod sina;
 mod soluk;
@@ -12,7 +10,9 @@ mod uc_sunucu;
 
 use logseq_tepsi_cekirdek::komut::Komut;
 // Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
-use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, sunucu, uc, yollar};
+use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, yollar};
+use logseq_tepsi_sistem::{kayit, kurulum};
+use logseq_tepsi_uc::{sunucu, uc};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

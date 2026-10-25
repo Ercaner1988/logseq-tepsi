@@ -3,9 +3,9 @@
 //! (ikili crate'te ileti penceresine `PostMessageW`) işi devralır. Bu iş parçacığında panik
 //! olmamalı (`panic = "abort"`). Win32'ye bağımlı değildir.
 
-use crate::gunluk;
 use crate::onbellek::ZamanliOnbellek;
 use crate::uc::{self, Is, Yanit};
+use logseq_tepsi_cekirdek::gunluk;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::Mutex;
