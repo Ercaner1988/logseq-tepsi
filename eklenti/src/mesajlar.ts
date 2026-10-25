@@ -41,3 +41,24 @@ export const BASLATILAMADI =
   "Tepsi aracı başlatılamadı. Onay penceresini kabul ettiniz mi? " +
   "Aracı bir kez “logseq-tepsi kur” ile kaydetmiş olmanız gerekir. " +
   "Elle başlatmak için terminalde logseq-tepsi yazın.";
+
+/** Araç ayarı reddedince gövde `400 Bad Request\n<neden>` gelir; yalnız nedeni döndürür. */
+export function redNedeni(ayrinti: string | undefined): string {
+  const satirlar = (ayrinti ?? "").split(/\r?\n/).filter((s) => s.length > 0 && !/^400 /.test(s));
+  return satirlar.join("; ");
+}
+
+export function ayarReddedildi(ayrinti: string | undefined): string {
+  const neden = redNedeni(ayrinti);
+  return (
+    `Tepsi aracı ayar değişikliğini reddetti${neden ? `: ${neden}` : ""}. ` +
+    "Eklenti ayarı araçtaki değere döndürüldü."
+  );
+}
+
+export function ayarIletilemedi(hata: Hata): string {
+  return (
+    `Ayar değişikliği araca iletilemedi, araçta uygulanmadı. ${hataMetni(hata)} ` +
+    "Eklenti ayarı araçtakinden farklı kalır; araç çalışınca eklenti açıldığında araçtaki değer geçerli olur."
+  );
+}

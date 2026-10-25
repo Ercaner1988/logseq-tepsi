@@ -91,6 +91,7 @@ async function istek(
   yontem: "GET" | "POST",
   yol: string,
   sec: Secenekler = {},
+  govde?: string,
 ): Promise<Sonuc<Yanit>> {
   const f: FetchIslevi = sec.fetch ?? ((g, a) => globalThis.fetch(g, a));
   const port = sec.port ?? VARSAYILAN_PORT;
@@ -100,13 +101,20 @@ async function istek(
     const yanit = await f(adresKur(port, yol), {
       method: yontem,
       headers: { [ISTEK_BASLIGI]: "1" },
+      // Gövde düz metin: tarayıcı Content-Type'ı text/plain yapar (CORS ön denetimi başlık
+      // izniyle yetinir, araç başka başlık istemez).
+      ...(govde !== undefined ? { body: govde } : {}),
       signal: denetci.signal,
       cache: "no-store",
     });
     const hata = durumKoduSinifla(yanit.status);
-    if (hata) return { ok: false, hata };
-    const govde = yontem === "GET" ? await yanit.text() : "";
-    return { ok: true, deger: { durum: yanit.status, govde } };
+    if (hata) {
+      // 400: araç nedenini gövdede söyler (örn. geçersiz kısayol); kullanıcıya gösterilir.
+      const neden = yanit.status === 400 ? (await yanit.text()).trim() : "";
+      return { ok: false, hata: neden ? { ...hata, ayrinti: neden } : hata };
+    }
+    const yanitGovdesi = yontem === "GET" ? await yanit.text() : "";
+    return { ok: true, deger: { durum: yanit.status, govde: yanitGovdesi } };
   } catch (e) {
     return { ok: false, hata: hataSinifla(e) };
   } finally {
@@ -131,5 +139,31 @@ export async function gizle(sec?: Secenekler): Promise<Sonuc<null>> {
 
 export async function goster(sec?: Secenekler): Promise<Sonuc<null>> {
   const s = await istek("POST", "/goster", sec);
+  return s.ok ? { ok: true, deger: null } : s;
+}
+
+/** `GET /ayar` gövdesini `anahtar=değer` çiftlerine ayırır; hiç çift yoksa null. */
+export function ayarAyristir(metin: string): Record<string, string> | null {
+  const sonuc: Record<string, string> = {};
+  for (const satir of metin.split(/\r?\n/)) {
+    const i = satir.indexOf("=");
+    if (i > 0) sonuc[satir.slice(0, i).trim()] = satir.slice(i + 1).trim();
+  }
+  return Object.keys(sonuc).length > 0 ? sonuc : null;
+}
+
+export async function ayarAl(sec?: Secenekler): Promise<Sonuc<Record<string, string>>> {
+  const s = await istek("GET", "/ayar", sec);
+  if (!s.ok) return s;
+  const ayar = ayarAyristir(s.deger.govde);
+  if (!ayar) {
+    return { ok: false, hata: { tur: "beklenmedik", ayrinti: "/ayar yanıtı çözülemedi" } };
+  }
+  return { ok: true, deger: ayar };
+}
+
+/** `POST /ayar`: satırlar `anahtar=değer` biçiminde; geçersizse araç 400 + neden döner. */
+export async function ayarGonder(satirlar: string[], sec?: Secenekler): Promise<Sonuc<null>> {
+  const s = await istek("POST", "/ayar", sec, satirlar.join("\n") + "\n");
   return s.ok ? { ok: true, deger: null } : s;
 }

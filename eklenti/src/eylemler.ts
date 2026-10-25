@@ -1,5 +1,7 @@
 // Kullanıcı eylemlerinin mantığı. Logseq'e bağımlılıklar `Ortam` ile dışarıdan verilir.
 import {
+  ayarAl,
+  ayarGonder,
   BASLAT_ADRESI,
   durumAl,
   gizle,
@@ -8,6 +10,15 @@ import {
   type Sonuc,
 } from "./ag";
 import {
+  degisenSatirlar,
+  eklentiFarki,
+  satirlariIsle,
+  type AracAyarlari,
+  type EklentiAyarlari,
+} from "./ayar";
+import {
+  ayarIletilemedi,
+  ayarReddedildi,
   BASLATILAMADI,
   BASLATILIYOR,
   baslatildi,
@@ -23,13 +34,30 @@ export interface AgApi {
   gizle: (sec?: Secenekler) => Promise<Sonuc<null>>;
 }
 
+export interface AyarAgApi {
+  ayarAl: (sec?: Secenekler) => Promise<Sonuc<Record<string, string>>>;
+  ayarGonder: (satirlar: string[], sec?: Secenekler) => Promise<Sonuc<null>>;
+}
+
 export interface Ortam {
   mesaj: (metin: string, tur: MesajTuru, sureMs?: number) => void;
   adresAc: (url: string) => void;
   uyku: (ms: number) => Promise<void>;
   secenekler: () => Secenekler;
   ag?: AgApi;
+  ayarAg?: AyarAgApi;
+  /** Logseq eklenti ayarları (logseq.settings). */
+  ayarlar?: () => Record<string, unknown> | undefined;
+  /** Eklenti ayarlarını yazar (logseq.updateSettings). */
+  ayarGuncelle?: (kismi: EklentiAyarlari) => void;
 }
+
+/** Aracın son bilinen ayarları (açılış eşitlemesi ya da başarılı POST sonrası); araç kapalıysa null. */
+export interface AyarDeposu {
+  bilinen: AracAyarlari | null;
+}
+
+const GERCEK_AYAR_AGI: AyarAgApi = { ayarAl, ayarGonder };
 
 const GERCEK_AG: AgApi = { durumAl, gizle };
 
@@ -87,4 +115,44 @@ export async function baslatEylemi(o: Ortam, ayar: BaslatAyari = {}): Promise<Ba
   }
   o.mesaj(BASLATILAMADI, "warning", 12000);
   return "baslatilamadi";
+}
+
+/**
+ * Açılışta: araçtaki ayarları okuyup eklenti ayarlarını onlara eşitler (araç tek kaynak). Araç
+ * yoksa sessiz kalır (açılış uyarısı ayrıdır). Eşitleme yazdığı değerleri `bilinen`e koyar; böylece
+ * ardından gelen "ayar değişti" olayı araca geri POST etmez.
+ */
+export async function ayarEsitle(o: Ortam, depo: AyarDeposu): Promise<void> {
+  const s = await (o.ayarAg ?? GERCEK_AYAR_AGI).ayarAl(o.secenekler());
+  if (!s.ok) return;
+  depo.bilinen = s.deger;
+  const fark = eklentiFarki(s.deger, o.ayarlar?.());
+  if (Object.keys(fark).length > 0) o.ayarGuncelle?.(fark);
+}
+
+/**
+ * Kullanıcı eklenti ayarını değiştirince: değişen ayarları araca POST eder. Araç kapalıysa ya da
+ * ulaşılamazsa uyarır (sessiz kayıp yok); araç değeri reddederse nedenini söyler ve eklenti
+ * ayarını araçtaki değere geri alır.
+ */
+export async function ayarDegisti(
+  o: Ortam,
+  depo: AyarDeposu,
+  yeni: Record<string, unknown> | undefined,
+  eski: Record<string, unknown> | undefined,
+): Promise<void> {
+  const satirlar = degisenSatirlar(yeni, eski, depo.bilinen);
+  if (satirlar.length === 0) return;
+  const ag = o.ayarAg ?? GERCEK_AYAR_AGI;
+  const s = await ag.ayarGonder(satirlar, o.secenekler());
+  if (s.ok) {
+    depo.bilinen = satirlariIsle(depo.bilinen, satirlar);
+    return;
+  }
+  if (s.hata.tur === "beklenmedik" && s.hata.durum === 400) {
+    o.mesaj(ayarReddedildi(s.hata.ayrinti), "error", 10000);
+    await ayarEsitle(o, depo);
+    return;
+  }
+  o.mesaj(ayarIletilemedi(s.hata), "warning", 12000);
 }

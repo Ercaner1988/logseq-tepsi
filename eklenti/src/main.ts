@@ -2,16 +2,23 @@
 // Pencereyi gizleme işini eklenti yapamaz (iframe içinde çalışır); yerel uçtan araca söyler.
 import "@logseq/libs";
 import { portCoz } from "./ag";
+import { ayarSemasi } from "./ayar";
 import {
   acilisKontrolu,
+  ayarDegisti,
+  ayarEsitle,
   baslatEylemi,
   durumEylemi,
   gizleEylemi,
+  type AyarDeposu,
   type Ortam,
 } from "./eylemler";
 
 const VARSAYILAN_KISAYOL = "mod+shift+x";
 const ARAC_CUBUGU_ANAHTARI = "logseq-tepsi-toolbar";
+
+/** Aracın son bilinen ayarları (eşitleme ve başarılı gönderimle güncellenir). */
+const depo: AyarDeposu = { bilinen: null };
 
 const AYAR_SEMASI = [
   {
@@ -34,9 +41,11 @@ const AYAR_SEMASI = [
     default: VARSAYILAN_KISAYOL,
     title: "Tepsiye gizle kısayolu",
     description:
-      "Örnek: mod+shift+x (mod, Windows'ta Ctrl tuşudur). Boş bırakırsanız kısayol atanmaz. " +
+      "Logseq içi kısayol. Örnek: mod+shift+x (mod, Windows'ta Ctrl tuşudur). Boş bırakırsanız kısayol atanmaz. " +
       "Değişiklik, eklenti yeniden yüklenince ya da Logseq yeniden açılınca geçerli olur.",
   },
+  // Aşağıdakiler tepsi aracının ayarlarıdır: açılışta araçtan okunur, değişince araca yazılır.
+  ...ayarSemasi(),
 ];
 
 const SIMGE_SVG =
@@ -56,6 +65,8 @@ function ortam(): Ortam {
     },
     uyku: (ms) => new Promise((coz) => setTimeout(coz, ms)),
     secenekler: () => ({ port: portCoz(logseq.settings?.port) }),
+    ayarlar: () => logseq.settings,
+    ayarGuncelle: (kismi) => logseq.updateSettings(kismi),
   };
 }
 
@@ -98,7 +109,11 @@ async function main(): Promise<void> {
     () => void baslatEylemi(ortam()),
   );
 
+  // Araç ayarlarının değişimi araca iletilir; araçtan gelen eşitleme geri POST etmez (bilinen).
+  logseq.onSettingsChanged((yeni, eski) => void ayarDegisti(ortam(), depo, yeni, eski));
+
   await acilisKontrolu(ortam(), logseq.settings?.acilisUyarisi !== false);
+  await ayarEsitle(ortam(), depo);
 }
 
 logseq.ready(main).catch(console.error);

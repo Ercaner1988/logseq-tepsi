@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   adresKur,
+  ayarAl,
+  ayarAyristir,
+  ayarGonder,
   durumAl,
   durumAyristir,
   durumKoduSinifla,
@@ -142,5 +145,74 @@ describe("uçtan uca (sahte fetch)", () => {
       });
     const s = await durumAl({ fetch: asili, zamanAsimiMs: 20 });
     expect(s).toEqual({ ok: false, hata: { tur: "zaman-asimi" } });
+  });
+});
+
+describe("ayar ucu", () => {
+  const AYAR_GOVDESI =
+    "kucultme=tepsi\ntik=tek\nkapaliyken_tik_acar=evet\nkisayol_goster_gizle=Ctrl+Alt+L\n" +
+    "oturumda_gizli_baslat=hayir\nbaslangicta_calis=hayir\n";
+
+  test("ayarAyristir anahtar=değer çiftlerini ayırır (CRLF, boş değer)", () => {
+    expect(ayarAyristir("a=1\r\nb=\r\nc=x=y\n")).toEqual({ a: "1", b: "", c: "x=y" });
+    expect(ayarAyristir("")).toBeNull();
+    expect(ayarAyristir("düz metin\n")).toBeNull();
+  });
+
+  test("ayarAl GET /ayar ister ve çözer", async () => {
+    let girdi = "";
+    let ayar: RequestInit = {};
+    const f: FetchIslevi = async (g, a) => {
+      girdi = g;
+      ayar = a;
+      return new Response(AYAR_GOVDESI, { status: 200 });
+    };
+    const s = await ayarAl({ port: 5555, fetch: f });
+    expect(girdi).toBe("http://127.0.0.1:5555/ayar");
+    expect(ayar.method).toBe("GET");
+    expect((ayar.headers as Record<string, string>)[ISTEK_BASLIGI]).toBe("1");
+    expect(s.ok && s.deger.kucultme).toBe("tepsi");
+    expect(s.ok && s.deger.kisayol_goster_gizle).toBe("Ctrl+Alt+L");
+    expect(s.ok && Object.keys(s.deger)).toHaveLength(6);
+  });
+
+  test("ayarAl çözülemeyen gövdede beklenmedik, araç kapalıysa kapali", async () => {
+    const s = await ayarAl({ fetch: yanit(200, "<html>") });
+    expect(s.ok).toBe(false);
+    if (!s.ok) expect(s.hata.tur).toBe("beklenmedik");
+    const k = await ayarAl({ fetch: firlat(new TypeError("Failed to fetch")) });
+    expect(k).toEqual({ ok: false, hata: { tur: "kapali" } });
+  });
+
+  test("ayarGonder POST /ayar, gövde satırları + başlık", async () => {
+    let girdi = "";
+    let ayar: RequestInit = {};
+    const f: FetchIslevi = async (g, a) => {
+      girdi = g;
+      ayar = a;
+      return new Response(null, { status: 204 });
+    };
+    const s = await ayarGonder(["tik=cift", "kucultme=gorev_cubugu"], { port: 5555, fetch: f });
+    expect(s).toEqual({ ok: true, deger: null });
+    expect(girdi).toBe("http://127.0.0.1:5555/ayar");
+    expect(ayar.method).toBe("POST");
+    expect(ayar.body).toBe("tik=cift\nkucultme=gorev_cubugu\n");
+    expect((ayar.headers as Record<string, string>)[ISTEK_BASLIGI]).toBe("1");
+  });
+
+  test("400 nedeni ayrıntı olarak taşınır; 403 ve 500 değişmez", async () => {
+    const s = await ayarGonder(["tik=uc"], {
+      fetch: yanit(400, "400 Bad Request\ntik: tek ya da cift olmalı: uc\n"),
+    });
+    expect(s).toEqual({
+      ok: false,
+      hata: { tur: "beklenmedik", durum: 400, ayrinti: "400 Bad Request\ntik: tek ya da cift olmalı: uc" },
+    });
+    const bos = await ayarGonder(["x=1"], { fetch: yanit(400, "") });
+    expect(bos).toEqual({ ok: false, hata: { tur: "beklenmedik", durum: 400 } });
+    expect(await ayarGonder(["x=1"], { fetch: yanit(403, "yasak") })).toEqual({
+      ok: false,
+      hata: { tur: "yasak", durum: 403 },
+    });
   });
 });
