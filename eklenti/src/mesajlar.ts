@@ -23,7 +23,8 @@ export function hataMetni(hata: Hata): string {
 
 export function durumMetni(d: Durum): string {
   const logseq = d.logseq === "acik" ? "açık" : "kapalı";
-  return `Tepsi aracı çalışıyor (sürüm ${d.surum}). Gizli pencere: ${d.gizli}. Logseq: ${logseq}.`;
+  const api = d.api === undefined ? "" : ` API sunucusu: ${d.api === "acik" ? "çalışıyor" : "kapalı"}.`;
+  return `Tepsi aracı çalışıyor (sürüm ${d.surum}). Gizli pencere: ${d.gizli}. Logseq: ${logseq}.${api}`;
 }
 
 export const BASLATILIYOR =
@@ -62,3 +63,29 @@ export function ayarIletilemedi(hata: Hata): string {
     "Eklenti ayarı araçtakinden farklı kalır; araç çalışınca eklenti açıldığında araçtaki değer geçerli olur."
   );
 }
+
+export function notAcilamadi(neden: string): string {
+  return `Anında not açılamadı: ${neden}`;
+}
+
+export const NOT_SAYFA_YOK = "bugünün günlük sayfası bulunamadı ya da oluşturulamadı";
+export const NOT_BLOK_YOK = "sayfaya boş blok eklenemedi";
+
+export const API_IZIN_YOK =
+  "Logseq bu sürümde izin vermiyor; Logseq'in kendi sunucu menüsünü kullanın.";
+
+export function apiIstekGonderildi(baslat: boolean): string {
+  return `API sunucusunu ${baslat ? "başlatma" : "durdurma"} isteği Logseq'e gönderildi.`;
+}
+
+export function apiDurumu(acik: boolean, istenenAcik: boolean): string {
+  const simdi = acik ? "çalışıyor" : "kapalı";
+  return acik === istenenAcik
+    ? `API sunucusu ${simdi}.`
+    : `API sunucusu henüz ${simdi} görünüyor; Logseq'in kendi sunucu menüsünden de bakabilirsiniz.`;
+}
+
+export const API_AYARI_BEKLEMEDE =
+  "Logseq açık olduğu için API sunucusu ayarı Logseq kapanınca uygulanacak.";
+export const API_AYARI_YAZILAMADI =
+  "Araç API sunucusu ayarını Logseq'in yapılandırma dosyasına yazamadı (ayrıntı aracın günlüğünde).";

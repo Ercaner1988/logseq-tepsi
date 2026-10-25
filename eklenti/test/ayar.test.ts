@@ -27,7 +27,7 @@ function t(arac: string) {
 }
 
 describe("eşleme tablosu", () => {
-  test("altı araç anahtarının hepsi var, eklenti anahtarları benzersiz", () => {
+  test("on araç anahtarının hepsi var (ilk altısı eski sırayla), eklenti anahtarları benzersiz", () => {
     expect(AYAR_TANIMLARI.map((a) => a.arac)).toEqual([
       "kucultme",
       "tik",
@@ -35,6 +35,10 @@ describe("eşleme tablosu", () => {
       "kisayol_goster_gizle",
       "oturumda_gizli_baslat",
       "baslangicta_calis",
+      "kisayol_not",
+      "not_hedefi",
+      "kalinan_sayfa",
+      "api_otomatik_baslat",
     ]);
     const anahtarlar = AYAR_TANIMLARI.map((a) => a.eklenti);
     expect(new Set(anahtarlar).size).toBe(anahtarlar.length);
@@ -51,12 +55,16 @@ describe("eşleme tablosu", () => {
       kisayolGosterGizle: "Ctrl+Alt+L",
       oturumdaGizliBaslat: false,
       baslangictaCalis: false,
+      kisayolNot: "Ctrl+Alt+N",
+      notHedefi: "gunluk",
+      kalinanSayfa: true,
+      apiOtomatikBaslat: false,
     });
   });
 
   test("şema Logseq biçiminde: enum seçenekleri ve varsayılan", () => {
     const sema = ayarSemasi();
-    expect(sema).toHaveLength(6);
+    expect(sema).toHaveLength(10);
     const k = sema.find((s) => s.key === "kucultme");
     expect(k).toMatchObject({ type: "enum", default: "tepsi", enumChoices: ["tepsi", "gorev_cubugu"] });
     const b = sema.find((s) => s.key === "kapaliykenTikAcar");

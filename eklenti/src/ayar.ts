@@ -75,6 +75,45 @@ export const AYAR_TANIMLARI: readonly AyarTanimi[] = [
     baslik: "Bilgisayar açılınca aracı başlat (araç)",
     aciklama: "Başlangıç klasörüne araç kısayolunu koyar ya da siler. Gerçek durum aracın kısayol dosyasıdır.",
   },
+  {
+    arac: "kisayol_not",
+    eklenti: "kisayolNot",
+    tur: "string",
+    varsayilan: "Ctrl+Alt+N",
+    baslik: "Anında not: genel kısayol (araç)",
+    aciklama:
+      "Her programda çalışan genel kısayol; Logseq'i gösterir (kapalıysa başlatır) ve yeni bir not satırı açar. " +
+      "Örnek: Ctrl+Alt+N (yalnız ASCII). Boş bırakırsanız kapalı olur.",
+  },
+  {
+    arac: "not_hedefi",
+    eklenti: "notHedefi",
+    tur: "enum",
+    secenekler: ["gunluk", "yeni_sayfa"],
+    varsayilan: "gunluk",
+    baslik: "Anında not nereye yazılsın (araç)",
+    aciklama:
+      "gunluk: bugünün günlük sayfasının sonuna boş blok. yeni_sayfa: \"Not YYYY-MM-DD HH:mm\" adlı yeni sayfa.",
+  },
+  {
+    arac: "kalinan_sayfa",
+    eklenti: "kalinanSayfa",
+    tur: "boolean",
+    varsayilan: true,
+    baslik: "Logseq açılınca kaldığım sayfaya dön (araç)",
+    aciklama:
+      "Logseq açıldığında, siz henüz bir sayfaya gitmediyseniz son baktığınız sayfa açılır (sayfa silinmişse ana sayfada kalır).",
+  },
+  {
+    arac: "api_otomatik_baslat",
+    eklenti: "apiOtomatikBaslat",
+    tur: "boolean",
+    varsayilan: false,
+    baslik: "Logseq açılınca API sunucusu otomatik başlasın (araç)",
+    aciklama:
+      "Logseq'in kendi yapılandırmasındaki (configs.edn) :server/autostart değerini değiştirir. Logseq açıkken yazılamaz: " +
+      "istek araçta bekler, Logseq kapanınca uygulanır.",
+  },
 ];
 
 /** Araç değeri → eklenti ayar değeri; tanınmayan değerde undefined. */

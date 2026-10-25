@@ -21,6 +21,8 @@ export interface Durum {
   surum: string;
   gizli: number;
   logseq: "acik" | "kapali";
+  /** Logseq API sunucusu (yalnız araç `api=` satırı gönderiyorsa). */
+  api?: "acik" | "kapali";
 }
 
 export type FetchIslevi = (girdi: string, ayar: RequestInit) => Promise<Response>;
@@ -58,7 +60,13 @@ export function durumAyristir(metin: string): Durum | null {
   const logseq = alanlar.get("logseq");
   if (gizliMetin === undefined || !/^\d+$/.test(gizliMetin)) return null;
   if (logseq !== "acik" && logseq !== "kapali") return null;
-  return { surum: ilk[1], gizli: Number(gizliMetin), logseq };
+  const api = alanlar.get("api");
+  return {
+    surum: ilk[1],
+    gizli: Number(gizliMetin),
+    logseq,
+    ...(api === "acik" || api === "kapali" ? { api } : {}),
+  };
 }
 
 /** fetch'in fırlattığı hatayı sınıflar. */

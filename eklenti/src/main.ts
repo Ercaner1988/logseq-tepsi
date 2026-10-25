@@ -13,6 +13,9 @@ import {
   type AyarDeposu,
   type Ortam,
 } from "./eylemler";
+import { kalinanaDon, rotaDegisti, yeniDurum, type DepoKatmani, type KalinanOrtami } from "./kalinan";
+import { anindaNotEylemi, type DefterApi, type SayfaKimligi } from "./not";
+import { apiSunucusuEylemi } from "./sunucu";
 
 const VARSAYILAN_KISAYOL = "mod+shift+x";
 const ARAC_CUBUGU_ANAHTARI = "logseq-tepsi-toolbar";
@@ -70,6 +73,79 @@ function ortam(): Ortam {
   };
 }
 
+const DEPO_ANAHTARI = "kalinan-sayfa.json";
+
+/** Kalınan sayfa deposu: önce Logseq'in eklenti deposu, olmazsa iframe localStorage (hata fırlatan katman atlanır). */
+const DEPO_KATMANLARI: DepoKatmani[] = [
+  {
+    oku: async () => (await logseq.FileStorage.getItem(DEPO_ANAHTARI)) ?? null,
+    yaz: (deger) => logseq.FileStorage.setItem(DEPO_ANAHTARI, deger),
+  },
+  {
+    oku: async () => localStorage.getItem(DEPO_ANAHTARI),
+    yaz: async (deger) => localStorage.setItem(DEPO_ANAHTARI, deger),
+  },
+];
+
+const kalinanDurum = yeniDurum();
+
+type SayfaGirdisi = { uuid?: unknown; title?: unknown; originalName?: unknown; name?: unknown };
+
+function sayfaKimligi(p: SayfaGirdisi | null | undefined): SayfaKimligi | null {
+  if (!p) return null;
+  const ad = [p.title, p.originalName, p.name].find((x) => typeof x === "string" && x !== "");
+  const uuid = typeof p.uuid === "string" ? p.uuid : undefined;
+  return typeof ad === "string" ? { uuid, ad } : null;
+}
+
+/** Sorgu sonucundaki uuid dizge ya da toString'i anlamlı bir nesne olabilir. */
+function uuidMetni(ham: unknown): string | null {
+  if (typeof ham === "string") return ham;
+  if (typeof ham === "object" && ham !== null) {
+    const s = String(ham);
+    return s !== "[object Object]" ? s : null;
+  }
+  return null;
+}
+
+const DEFTER: DefterApi = {
+  gunlukSayfa: async (gun) => {
+    const sonuc = await logseq.DB.datascriptQuery<unknown[][]>(
+      `[:find ?u :where [?p :block/journal-day ${gun}] [?p :block/uuid ?u]]`,
+    );
+    const uuid = uuidMetni(sonuc?.[0]?.[0]);
+    return uuid ? sayfaKimligi(await logseq.Editor.getPage(uuid)) : null;
+  },
+  gunlukOlustur: async (gun) => sayfaKimligi(await logseq.Editor.createJournalPage(gun)),
+  sayfaVarMi: async (ad) => (await logseq.Editor.getPage(ad)) != null,
+  sayfaOlustur: async (ad) =>
+    sayfaKimligi(await logseq.Editor.createPage(ad, {}, { redirect: false, createFirstBlock: false })),
+  bosBlokEkle: async (s) => (await logseq.Editor.appendBlockInPage(s.uuid ?? s.ad, ""))?.uuid ?? null,
+  sayfayaGit: (s) => logseq.App.pushState("page", { name: s.uuid ?? s.ad }),
+  blokDuzenle: (uuid) => logseq.Editor.editBlock(uuid),
+};
+
+const KALINAN_ORTAMI: KalinanOrtami = {
+  depo: DEPO_KATMANLARI,
+  rota: {
+    sayfaVarMi: async (ad) => (await logseq.Editor.getPage(ad)) != null,
+    git: (ad) => logseq.App.pushState("page", { name: ad }),
+    grafAdi: async () => (await logseq.App.getCurrentGraph())?.name ?? null,
+  },
+  uyku: (ms) => new Promise((coz) => setTimeout(coz, ms)),
+};
+
+/** `window.top.apis.doAction` (belgesiz): yoksa ya da iframe yalıtımı erişimi engelliyorsa undefined. */
+function apiEylemi(): ((dizi: string[]) => Promise<unknown>) | undefined {
+  try {
+    const apis = (window.top as unknown as { apis?: { doAction?: (a: unknown) => Promise<unknown> } } | null)?.apis;
+    const eylem = apis?.doAction;
+    return typeof eylem === "function" ? (dizi) => eylem.call(apis, dizi) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function kisayolAyari(): string {
   const ham = logseq.settings?.kisayol;
   if (typeof ham !== "string") return VARSAYILAN_KISAYOL;
@@ -82,6 +158,14 @@ async function main(): Promise<void> {
   logseq.provideModel({
     tepsiGizle() {
       void gizleEylemi(ortam());
+    },
+    // Araç `logseq://...invokeCommand?action=plugin.logseq-tepsi.models.anindaNot&payload=<hedef>` ile çağırır.
+    anindaNot(payload: unknown) {
+      void anindaNotEylemi({ ...ortam(), defter: DEFTER }, payload);
+    },
+    // `...models.apiSunucusu&payload=baslat|durdur` (aracın menüsü).
+    apiSunucusu(payload: unknown) {
+      void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, payload);
     },
   });
 
@@ -108,12 +192,29 @@ async function main(): Promise<void> {
     { key: "tepsi-baslat", label: "Tepsi: aracı başlat" },
     () => void baslatEylemi(ortam()),
   );
+  logseq.App.registerCommandPalette(
+    { key: "tepsi-aninda-not", label: "Tepsi: anında not" },
+    () => void anindaNotEylemi({ ...ortam(), defter: DEFTER }, undefined),
+  );
+  logseq.App.registerCommandPalette(
+    { key: "tepsi-api-baslat", label: "Tepsi: API sunucusunu başlat" },
+    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "baslat"),
+  );
+  logseq.App.registerCommandPalette(
+    { key: "tepsi-api-durdur", label: "Tepsi: API sunucusunu durdur" },
+    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "durdur"),
+  );
+
+  // Kalınan sayfa: her sayfa rotası saklanır; kullanıcı gezindiyse açılış dönüşü yapılmaz.
+  logseq.App.onRouteChanged((r) => void rotaDegisti(KALINAN_ORTAMI, kalinanDurum, r));
 
   // Araç ayarlarının değişimi araca iletilir; araçtan gelen eşitleme geri POST etmez (bilinen).
   logseq.onSettingsChanged((yeni, eski) => void ayarDegisti(ortam(), depo, yeni, eski));
 
   await acilisKontrolu(ortam(), logseq.settings?.acilisUyarisi !== false);
   await ayarEsitle(ortam(), depo);
+  // Eşitlemeden sonra: kalinanSayfa ayarı araçtaki değeri taşır.
+  void kalinanaDon(KALINAN_ORTAMI, kalinanDurum, logseq.settings?.kalinanSayfa !== false);
 }
 
 logseq.ready(main).catch(console.error);

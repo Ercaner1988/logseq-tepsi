@@ -171,3 +171,76 @@ describe("ayarDegisti (kullanıcı eklenti ayarını değiştirince)", () => {
     expect(kayit.mesajlar).toEqual([]);
   });
 });
+
+describe("api_otomatik_baslat sonucu", () => {
+  const eski = { ...VARSAYILANLAR, apiOtomatikBaslat: false };
+  const yeni = { ...VARSAYILANLAR, apiOtomatikBaslat: true };
+
+  test("Logseq açıkken araç beklemeye aldıysa kullanıcıya 'Logseq kapanınca uygulanacak' denir", async () => {
+    const arac = { ...ARAC, api_otomatik_baslat: "evet", api_otomatik_bekleyen: "evet" };
+    const { o, kayit } = kur(ok(arac));
+    await ayarDegisti(o, { bilinen: { ...ARAC } }, yeni, eski);
+    expect(kayit.gonderilen).toEqual([["api_otomatik_baslat=evet"]]);
+    expect(kayit.mesajlar).toHaveLength(1);
+    expect(kayit.mesajlar[0].tur).toBe("success");
+    expect(kayit.mesajlar[0].metin).toContain("Logseq kapanınca uygulanacak");
+  });
+
+  test("araç hemen yazdıysa (Logseq kapalıydı) ileti yok", async () => {
+    const arac = { ...ARAC, api_otomatik_baslat: "evet", api_otomatik_bekleyen: "" };
+    const { o, kayit } = kur(ok(arac));
+    await ayarDegisti(o, { bilinen: { ...ARAC } }, yeni, eski);
+    expect(kayit.gonderilen).toHaveLength(1);
+    expect(kayit.mesajlar).toEqual([]);
+  });
+
+  test("araç yazamadıysa (istenen ≠ araçtaki, bekleyen yok) uyarır ve ayarı geri alır", async () => {
+    const arac = { ...ARAC, api_otomatik_baslat: "hayir", api_otomatik_bekleyen: "" };
+    const { o, kayit, ayarlar } = kur(ok(arac), ok(null), yeni);
+    const depo: AyarDeposu = { bilinen: { ...ARAC } };
+    await ayarDegisti(o, depo, yeni, eski);
+    expect(kayit.mesajlar).toHaveLength(1);
+    expect(kayit.mesajlar[0].tur).toBe("warning");
+    expect(kayit.mesajlar[0].metin).toContain("yapılandırma dosyasına yazamadı");
+    expect(ayarlar().apiOtomatikBaslat).toBe(false);
+    expect(depo.bilinen?.api_otomatik_baslat).toBe("hayir");
+  });
+
+  test("başka ayar değişince api sorgusu yapılmaz", async () => {
+    const { o, kayit } = kur(ok(ARAC));
+    await ayarDegisti(o, { bilinen: { ...ARAC } }, { ...VARSAYILANLAR, tik: "tek" }, { ...VARSAYILANLAR, tik: "cift" });
+    expect(kayit.alinan).toBe(0);
+  });
+});
+
+describe("yeni araç ayarları eşitlemesi", () => {
+  test("açılışta not ve kalınan sayfa ayarları araçtakilere çekilir", async () => {
+    const arac = {
+      ...ARAC,
+      kisayol_not: "Ctrl+Shift+F9",
+      not_hedefi: "yeni_sayfa",
+      kalinan_sayfa: "hayir",
+      api_otomatik_baslat: "evet",
+      api_otomatik_bekleyen: "evet",
+    };
+    const { o, ayarlar } = kur(ok(arac));
+    await ayarEsitle(o, { bilinen: null });
+    expect(ayarlar()).toMatchObject({
+      kisayolNot: "Ctrl+Shift+F9",
+      notHedefi: "yeni_sayfa",
+      kalinanSayfa: false,
+      apiOtomatikBaslat: true,
+    });
+  });
+
+  test("eklentide değişen yeni ayarlar araç satırlarına çevrilir", async () => {
+    const { o, kayit } = kur(ok(ARAC));
+    await ayarDegisti(
+      o,
+      { bilinen: { ...ARAC } },
+      { ...VARSAYILANLAR, kisayolNot: "Alt+Win+N", notHedefi: "yeni_sayfa", kalinanSayfa: false },
+      VARSAYILANLAR,
+    );
+    expect(kayit.gonderilen).toEqual([["kisayol_not=Alt+Win+N", "not_hedefi=yeni_sayfa", "kalinan_sayfa=hayir"]]);
+  });
+});

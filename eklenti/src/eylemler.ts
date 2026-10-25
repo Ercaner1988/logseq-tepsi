@@ -17,6 +17,8 @@ import {
   type EklentiAyarlari,
 } from "./ayar";
 import {
+  API_AYARI_BEKLEMEDE,
+  API_AYARI_YAZILAMADI,
   ayarIletilemedi,
   ayarReddedildi,
   BASLATILAMADI,
@@ -147,6 +149,8 @@ export async function ayarDegisti(
   const s = await ag.ayarGonder(satirlar, o.secenekler());
   if (s.ok) {
     depo.bilinen = satirlariIsle(depo.bilinen, satirlar);
+    const api = satirlar.find((x) => x.startsWith("api_otomatik_baslat="));
+    if (api) await apiAyariSonucu(o, depo, api.slice(api.indexOf("=") + 1));
     return;
   }
   if (s.hata.tur === "beklenmedik" && s.hata.durum === 400) {
@@ -155,4 +159,24 @@ export async function ayarDegisti(
     return;
   }
   o.mesaj(ayarIletilemedi(s.hata), "warning", 12000);
+}
+
+/**
+ * `api_otomatik_baslat` araca iletildikten sonra sonucu bildirir: Logseq açık olduğu için araçta
+ * bekliyorsa söyler; araç `configs.edn`e yazamadıysa (istenen değer ile araçtaki değer ayrı ve
+ * bekleyen yok) uyarır ve eklenti ayarını araçtaki gerçek değere geri alır.
+ */
+async function apiAyariSonucu(o: Ortam, depo: AyarDeposu, istenen: string): Promise<void> {
+  const g = await (o.ayarAg ?? GERCEK_AYAR_AGI).ayarAl(o.secenekler());
+  if (!g.ok) return;
+  if ((g.deger.api_otomatik_bekleyen ?? "") !== "") {
+    o.mesaj(API_AYARI_BEKLEMEDE, "success", 8000);
+    return;
+  }
+  if (g.deger.api_otomatik_baslat !== istenen) {
+    o.mesaj(API_AYARI_YAZILAMADI, "warning", 10000);
+    depo.bilinen = g.deger;
+    const fark = eklentiFarki(g.deger, o.ayarlar?.());
+    if (Object.keys(fark).length > 0) o.ayarGuncelle?.(fark);
+  }
 }
