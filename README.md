@@ -1,6 +1,6 @@
 # logseq-tepsi
 
-Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alanı) gizleyen küçük Windows aracı. Logseq'in kendisinde tepsi özelliği yok; araç pencere işlemleri yapar ve eklentinin konuşabileceği yalnız-yerel bir uç açar (Logseq'e başka API ya da dış ağ erişimi yok).
+Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alanı) gizleyen küçük Windows aracı. Logseq'in kendisinde tepsi özelliği yok; araç pencere işlemleri yapar ve eklentinin konuşabileceği yalnız-yerel bir uç açar. Dış ağ erişimi yok. Logseq'e dokunduğu yerler: `Logseq.exe`yi başlatmak (anında not ve API başlat/durdur için `logseq://` adresiyle), Logseq'in `127.0.0.1:12315` API portuna salt bağlantı yoklaması (istek göndermez) ve Logseq kapalıyken `%APPDATA%\Logseq\configs.edn`de yalnız `:server/autostart` anahtarı.
 
 ## Ne yapar
 
@@ -8,12 +8,14 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 - Logseq ana penceresi simge durumuna küçültülünce gizler (görev çubuğu düğmesi kalkar; `kucultme = gorev_cubugu` ise gizlemez). Olay `SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART)` ile yakalanır; yoklama yok, boşta CPU sıfır. Olay `IsIconic` tazelenmeden gelirse kısa gecikmeyle bir kez daha bakılır.
 - Çok pencere: her pencere ayrı hatırlanır (gizlenenler kümesi). Sol tık: görünür pencere varsa hepsini gizler; yoksa en son gizleneni gösterir (geri yükler, öne getirir); Logseq hiç açık değilse Logseq'i başlatır (`kapaliyken_tik_acar = hayir` ise başlatmaz). Varsayılan `tik = tek` kipinde çift tık tek tık sayılır; `tik = cift` kipinde yalnız çift tık göster/gizle yapar, tek tık hiçbir şey yapmaz (seçilmeyen tık türü işe yaramaz).
 - Açılışta tarama: araç Logseq açıkken başlarsa küçük pencereyi gizler (`kucultme = gorev_cubugu` iken gizlemez), zaten gizli olanı tepsiden geri getirilebilsin diye hatırlar.
-- Sağ tık menüsü: Göster, Hepsini göster, Tepsiye gizle, Çıkış, Tepsi aracını kapat, Ayarlar alt menüsü (aşağıda). Çıkış tüm Logseq ana pencerelerini kapatır (gizliyse önce görünür yapılır, sonra `WM_CLOSE`); araç tepside kalır, simgeye tıklayınca Logseq yeniden açılır. "Tepsi aracını kapat" yalnız aracı kapatır, Logseq'e dokunmaz (gizliyse önce gösterir). Oturum kapanırken (`WM_ENDSESSION`) gizli pencere gösterilir.
+- Sağ tık menüsü: Göster, Hepsini göster, Tepsiye gizle, Çıkış, Tepsi aracını kapat, **Anında not**, **API sunucusunu başlat/durdur** (Logseq kapalıyken soluk; etiket sunucunun durumunu söyler), Ayarlar alt menüsü (aşağıda). Çıkış tüm Logseq ana pencerelerini kapatır (gizliyse önce görünür yapılır, sonra `WM_CLOSE`); araç tepside kalır, simgeye tıklayınca Logseq yeniden açılır. "Tepsi aracını kapat" yalnız aracı kapatır, Logseq'e dokunmaz (gizliyse önce gösterir). Oturum kapanırken (`WM_ENDSESSION`) gizli pencere gösterilir.
 - Kapatma (X) düğmesine dokunmaz: Logseq kapanır, araç ve simge kalır.
 - Tek örnek: ikinci kopya hemen çıkar ama önce mevcut kopyaya "simgeyi yeniden ekle" iletisi yollar (simge, kanca ve açılış taraması tazelenir).
 - Logseq yolu sabit değil. Sıra: çalışan ana pencerenin süreç yolu, `%LOCALAPPDATA%\logseq-tepsi\logseq-yolu.txt` (son bilinen yol, araç kendisi yazar), kayıt defteri Uninstall girdileri (HKCU, HKLM, WOW6432Node; `InstallLocation`, `DisplayIcon`, `UninstallString`; `DisplayVersion`ı en yüksek olan önce, sayısal karşılaştırma: `0.10.15` < `2.0.2`), son çare sabit yollar. Sürümü bilinen en yüksek kurulumdan düşük bir yol (örn. 2.x varken eski Squirrel) ayara yazılmaz, ayardan da okunmaz. İlk var olan kullanılır. Logseq ayrık süreç olarak başlatılır (`ELECTRON_RUN_AS_NODE` kaldırılır, stdio boş, DETACHED_PROCESS + yeni süreç grubu + izin varsa iş nesnesinden kopuk).
 - Günlük: `%LOCALAPPDATA%\logseq-tepsi\gunluk.txt` (UTC, 64 KB'ta `gunluk.eski.txt`'ye döner; panik iletisi de buraya).
 - DPI: çalışma zamanında `PER_MONITOR_AWARE_V2` istenir (manifest yok).
+- **Anında not** (genel kısayol `kisayol_not`, varsayılan `Ctrl+Alt+N`, ya da menüdeki "Anında not"): Logseq gizliyse gösterip öne getirir; kapalıysa başlatır ve ana pencere görünene **ve eklenti araca kendini gösterene** kadar bekler (en çok 60 sn, 500 ms aralıkla; eklenti haber vermese de pencere görünürse süre dolunca bir kez denenir); sonra `Logseq.exe "logseq://x-callback-url/invokeCommand?action=plugin.logseq-tepsi.models.anindaNot&payload=<hedef>"` çalıştırır. Adres Logseq'in çalışan örneğine gider ve eklentinin `anindaNot` modelini çağırır: `gunluk` bugünün günlük sayfasının sonuna boş blok, `yeni_sayfa` "Not YYYY-MM-DD HH:mm" adlı sayfa (çakışırsa sonuna sayı); sayfaya gider ve bloğu düzenlemeye açar. Eklenti yüklenmeden gelen adres Logseq'te sessizce kaybolur, bu yüzden hazır olma beklenir. Hazır işareti: izinli `Origin` ile yetkili bir istek (eklentinin açılıştaki `GET /ayar`ı) gelince kurulur, araç Logseq'in kapalı olduğunu gördükçe sıfırlanır. Bir not hazırlığı sürerken gelen ikinci istek yok sayılır.
+- **API sunucusu** (Logseq'in `127.0.0.1:12315` HTTP API sunucusu): araç kısa bir TCP bağlantısıyla (300 ms) çalışıp çalışmadığını bilir (`GET /durum` sonuna `api=acik|kapali`, menü etiketi). Menüden başlat/durdur, eklentinin `apiSunucusu` modelini aynı adres yoluyla çağırır (eklentinin `window.top.apis.doAction` erişimi **canlı doğrulanmadı**, aşağıda). `api_otomatik_baslat` ayarı Logseq'in `configs.edn` dosyasındaki `:server/autostart` değeridir (aşağıda).
 
 ## Ayarlar
 
@@ -27,6 +29,20 @@ Tek kaynak: `%LOCALAPPDATA%\logseq-tepsi\ayar.toml` (TOML; değerler dizge, `eve
 | `kisayol_goster_gizle` | `Ctrl+Alt+L`; boş = kapalı | Genel kısayol (`RegisterHotKey`): görünürse gizler, gizliyse gösterir, kapalıysa Logseq'i başlatır. `Ctrl`, `Alt`, `Shift`, `Win` + harf/rakam/`F1`-`F24`/`Space`/`Enter`/`Tab`/`Esc`/ok ve gezinme tuşları; büyük/küçük harf duyarsız, yalnız ASCII; en az bir `Ctrl`/`Alt`/`Win` gerekir (`Shift` tek başına yalnız F tuşuyla). Dosyada ve uçta kurallı yazımla (`Ctrl+Alt+L`) saklanır. Kayıt başarısızsa (başka program kullanıyor) günlüğe yazılır ve ipucu uyarır; ayar değişince eski kayıt silinir. Menüden kapatınca boşalır, açınca varsayılan yazılır |
 | `oturumda_gizli_baslat` | `hayir`, `evet` | Yalnız araç başlangıç kısayolundan `--oturum` argümanıyla başlarsa: Logseq açık değilse başlatır, ana penceresi görününce (en çok 90 sn, 1 sn aralıkla yoklanır) tepsiye gizler. Elle başlatmada etkisizdir |
 | `baslangicta_calis` | `evet`, `hayir` | Dosyada TUTULMAZ: başlangıç kısayolunun (`Startup\Logseq-tepsi.lnk`) varlığıdır. Menüdeki "Bilgisayar açılınca başlat" işareti ve `GET /ayar` bunu gösterir; değiştirmek kısayolu kurar/siler (URL şemasına dokunmaz) |
+| `kisayol_not` | `Ctrl+Alt+N`; boş = kapalı | Anında not için genel kısayol (ikinci `RegisterHotKey` kimliği; yazım kuralları `kisayol_goster_gizle` ile aynı, kayıt hatası aynı ipucu uyarısında görünür; menüden kapatınca boşalır, açınca varsayılan yazılır) |
+| `not_hedefi` | `gunluk`, `yeni_sayfa` | Anında not nereye yazılır (yukarıda); adresin `payload` değeri olarak eklentiye gider |
+| `kalinan_sayfa` | `evet`, `hayir` | Eklenti, Logseq açılışında son bakılan sayfaya dönsün mü. Dosyada tutulur ve eklenti ayarıyla eşitlenir; dönüşü eklenti yapar ([eklenti README](eklenti/README.md)) |
+| `api_otomatik_baslat` | `evet`, `hayir` | Dosyada TUTULMAZ: gerçek kaynak `%APPDATA%\Logseq\configs.edn` içindeki üst düzey `:server/autostart` değeridir (anahtar yok ya da `nil` = `hayir`). Aşağıdaki "API sunucusu otomatik başlatma" |
+
+### API sunucusu otomatik başlatma (`configs.edn`)
+
+Logseq `:server/autostart` değerini açılışta okur (asar: `electron.server/reset-state!`, `server-indicator` bileşeni `:autostart` doğruysa 1 sn sonra `:server/do :restart` yollar). Araç bu anahtarı şöyle yönetir:
+
+- **Yazma yalnız Logseq kapalıyken.** Logseq açıkken verilen istek (menü, `POST /ayar`, eklenti) `ayar.toml`a `api_bekleyen = "evet"|"hayir"` olarak yazılır (uçtan değiştirilemez); menü etiketi, `GET /ayar` (`api_otomatik_bekleyen`) ve eklenti "Logseq kapanınca uygulanacak" der. Araç, Logseq ana penceresi 2 sn aralıklı **ardışık 2 durum yoklamasında** yoksa (kapanış yazımı bitsin diye ~4 sn) bekleyeni uygular ve siler. İstenen zaten gerçek değerse bekleyen silinir, yazılmaz.
+- **Dar metin düzenleyici** (`logseq/src/edn.rs`; tam EDN ayrıştırıcı değil): üst düzey `{ ... }` haritasının elemanlarını bulur (dizge, `;` yorum, `\x` karakter sabiti, iç içe `{ [ (`, `#{}`, `#"..."`, etiketli öğe farkında). `:server/autostart` varsa yalnız değeri (`true`/`false`) değişir; yoksa kapanış `}`'den önce dosyanın satır sonu (LF/CRLF) ve girintisiyle eklenir; öbür baytlar aynen kalır, UTF-8 BOM korunur. **Beklenmeyen yapıda yazma reddedilir** (`#_`, `^`, harita olmayan üst düzey, kapanmamış kap, artık içerik, tek sayıda eleman, çift anahtar, `true/false/nil` olmayan değer) ve günlüğe yalnız sabit neden yazılır.
+- İlk yazımdan önce bir kez `configs.edn.tepsi-yedek` alınır (yedek alınamazsa yazılmaz); yazma atomik (`configs.edn.tepsi-tmp` + yeniden adlandırma).
+- Dosya içeriği, token ve değerler günlüğe, hata iletisine ya da sınama çıktısına HİÇ basılmaz (dosyada `:server/tokens` var); sınamalar sözcük listesinden üretilmiş sahte içerikle çalışır, gerçek `configs.edn`e dokunulmaz.
+- API sunucusu çalışıyor mu: `127.0.0.1:12315`e 300 ms'lik TCP bağlantısı (adres Logseq'in varsayılanıdır: asar `get-host`/`get-port` varsayılanları `127.0.0.1`, `12315`; `:server/host`/`:server/port` ile değiştirilmişse yoklama yanılır).
 
 Dosya eksikse varsayılanlarla çalışılır (günlüğe yazılır). Dosya bozuksa (TOML hatası ya da geçersiz değer) `ayar.toml.bozuk` adıyla kenara alınır, varsayılanlarla çalışılır ve günlüğe yazılır; kenara alınamazsa dosyanın üstüne hiç yazılmaz. Bilinmeyen anahtar uyarıyla atlanır (ilk kayıtta dosyadan düşer).
 
@@ -36,10 +52,10 @@ Dosya eksikse varsayılanlarla çalışılır (günlüğe yazılır). Dosya bozu
 
 | İstek | Yanıt |
 | --- | --- |
-| `GET /durum` | 200 `text/plain; charset=utf-8`: `logseq-tepsi <sürüm>\ngizli=<sayı>\nlogseq=<acik\|kapali>\n` |
+| `GET /durum` | 200 `text/plain; charset=utf-8`: `logseq-tepsi <sürüm>\ngizli=<sayı>\nlogseq=<acik\|kapali>\napi=<acik\|kapali>\n` (ilk üç satırın sözleşmesi aynen; `api` Logseq API sunucusunun TCP yoklamasıdır, 1 sn önbellekli, yalnız başarılı yetkili `GET /durum`da yapılır) |
 | `POST /gizle` | 204; görünür tüm Logseq ana pencerelerini tepsiye gizler |
 | `POST /goster` | 204; tepsideki tüm ana pencereleri gösterir, en son gizlenen öne gelir |
-| `GET /ayar` | 200 `text/plain; charset=utf-8`: `anahtar=değer` satırları (`kucultme`, `tik`, `kapaliyken_tik_acar`, `kisayol_goster_gizle`, `oturumda_gizli_baslat`, `baslangicta_calis`; sabit sıra) |
+| `GET /ayar` | 200 `text/plain; charset=utf-8`: `anahtar=değer` satırları (`kucultme`, `tik`, `kapaliyken_tik_acar`, `kisayol_goster_gizle`, `oturumda_gizli_baslat`, `baslangicta_calis`; sabit sıra) + sona `kisayol_not`, `not_hedefi`, `kalinan_sayfa`, `api_otomatik_baslat` (istenen değer: bekleyen varsa o, yoksa `configs.edn`deki), `api_otomatik_bekleyen` (bekleyen varsa `evet`/`hayir`, yoksa boş) |
 | `POST /ayar` | Gövde: bir ya da birkaç `anahtar=değer` satırı (`Content-Length` zorunlu, en çok 1024 bayt). Hepsi geçerliyse 204 ve ileti penceresine devredilir (uygulama ve kayıt pencere iş parçacığında; yanıt işlenmeden önce döner); biri geçersizse hiçbiri uygulanmaz, 400 + neden (gövdede). `Content-Length` yoksa 411, 1024'ten büyükse 413 |
 | `OPTIONS` (ön uçuş) | izinli Origin ise 204 + `Access-Control-Allow-Origin: <aynı origin>`, `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: X-Logseq-Tepsi`, `Access-Control-Allow-Private-Network: true`; değilse 403 |
 
@@ -59,7 +75,8 @@ logseq-tepsi kur
 ## Sınama
 
 ```
-cargo test                        # çekirdek ve ikili crate (workspace)
+cargo test                        # çekirdek, uç, logseq ve ikili crate (workspace)
+cd eklenti && bun test            # eklenti (ağ, ayar eşleme, anında not, kalınan sayfa, API başlat/durdur)
 logseq-tepsi --sina-gizle-goster   # sol tık işlevini iki kez çağırır (gizle, göster)
 logseq-tepsi --sina-kucult         # çalışan tepsi sürecini dışarıdan sınar: küçült, gizlenmeyi bekle, geri yükle
 logseq-tepsi --sina-simge-tikla    # çalışan sürecin ileti penceresine tıklama yollar, simgenin kayıtlı olduğunu doğrular
@@ -71,10 +88,33 @@ Sınama komutları sonunda Logseq penceresini görünür ve geri yüklenmiş bı
 
 ## Yapı
 
-- `cekirdek/` (`logseq-tepsi-cekirdek`): Win32'den bağımsız saf kod ve sınamaları: karar tabloları (`mantik`), ayara bağlı davranış kararları (`davranis`), gizlenenler kümesi (`gizlenen`), yol adayları ve kayıt değeri ayrıştırma (`yollar`), ayarlar yapısı ve `ayar.toml` okuma/yazma (`ayar`), genel kısayol dizgesi ayrıştırıcısı (`kisayol`), Ayarlar alt menüsü modeli (`menu`), günlük biçimi (`gunluk`), komut satırı (`komut`).
-- `uc/` (`logseq-tepsi-uc`): yerel uç: HTTP ayrıştırıcı ve yetki kararı (`uc`), TCP sunucusu (`sunucu`), `/durum` önbelleği (`onbellek`).
+- `cekirdek/` (`logseq-tepsi-cekirdek`): Win32'den bağımsız saf kod ve sınamaları: karar tabloları (`mantik`), ayara bağlı davranış kararları (`davranis`), gizlenenler kümesi (`gizlenen`), yol adayları ve kayıt değeri ayrıştırma (`yollar`), ayarlar yapısı ve `ayar.toml` okuma/yazma (`ayar`), genel kısayol dizgesi ayrıştırıcısı (`kisayol`), Ayarlar alt menüsü ve ana menü ek maddeleri modeli (`menu`), `logseq://...invokeCommand` adresi ve Logseq-hazır bekleme kararı (`not`), günlük biçimi (`gunluk`), komut satırı (`komut`).
+- `uc/` (`logseq-tepsi-uc`): yerel uç: HTTP ayrıştırıcı ve yetki kararı (`uc`), TCP sunucusu (`sunucu`; `/durum` `api=` satırı, eklenti-hazır işareti), `/durum` önbelleği (`onbellek`).
+- `logseq/` (`logseq-tepsi-logseq`): Logseq tarafı, Win32'siz: `configs.edn` için dar EDN düzenleyici (`edn`), yedekli atomik dosya yazımı (`yapilandirma`), API sunucusu yoklaması ve `api_otomatik_baslat` karar tablosu (`api`).
 - `sistem/` (`logseq-tepsi-sistem`): Windows kurulum katmanı: kayıt defteri (`kayit`), başlangıç kısayolu (COM) ve `kur`/`kaldir` (`kurulum`).
-- `src/`: Win32 kabuğu (pencere, tepsi, genel kısayol kaydı `tus`, ayarların uygulanması `ayarlar`, TCP sunucusuna köprü).
+- `src/`: Win32 kabuğu (pencere, tepsi, genel kısayol kaydı `tus` (kimlik başına: 1 göster/gizle, 2 anında not), ayarların uygulanması `ayarlar`, anında not/API adresi gönderme `not_gonder`, TCP sunucusuna köprü).
+
+## Logseq 2.0.2'de doğrulananlar (asar okuması)
+
+`C:\Program Files\Logseq\resources\app.asar` (kaynak haritası içindeki ClojureScript metni; `rg -a -o '.{0,300}desen.{0,500}' app.asar` ile salt okunur arandı). Hiçbiri canlı Logseq'e dokunularak sınanmadı:
+
+- **invokeCommand adresi.** `electron.core` URL işleyicisi `(= action "/invokeCommand")` dalında `get-URL-decoded-params parsed-url ["action" "payload"]` ile (`URL.searchParams`: standart yüzde çözme) `{:action :payload}` alıp `send-to-focused-renderer "invokeCommand"` yollar. Renderer'da `(defevent! :editor/invoke-command ...)` `action`ı `.` ile böler (`[tür kimlik grup]`, eylem = sonuncu) ve `:plugin` ise `plugin-api/invoke_external_plugin_cmd id group action [payload]` çağırır; `:models` grubu `plugin-handler/call-plugin-user-model!` ile eklentinin `provideModel` işlevini **adı olduğu gibi** (büyük/küçük harf korunur) ve ilk argüman `payload` dizgesi olarak çağırır. Eklenti tarafı (`@logseq/libs` 0.3.4 `_callUserModel`) `userModel[ad](payload)` çalıştırır. Bu yüzden eklenti kimliği klasör adıyla aynı (`logseq-tepsi`) olmalı ve adreste `.` kodlanmaz.
+- **İkinci örnek.** `Logseq.exe <adres>` `electron.core` `second-instance` işleyicisine gider: `win/switch-to-window!` (küçültülmüşse geri yükler, `focus` çağırır) ve komut satırındaki `logseq:` ile başlayan ilk argümanı `open-url-handler` ile işler. Gizli (`SW_HIDE`) pencereyi bu işleyici kendisi göstermez (okumadan çıkarım; araç anında not için pencereyi önceden gösterir). API başlat/durdur adresinde pencere gösterilmez.
+- **Eklenti yüklenmeden gelen adres kaybolur.** `call-plugin-user-model!` `(when-let [pl (get-plugin-inst pid)] ...)`; eklenti örneği yoksa sessizce `nil`. Araç bu yüzden eklentinin araca ulaşmasını (`Origin` işareti) bekler.
+- **API sunucusu.** `electron.server/do-server!` `:start` (yalnız durum `nil/:closed/:error` iken), `:stop`, `:restart`; renderer'ın kendi menüsü başlat için `:restart`, durdur için `:stop` yollar (`(ipc/ipc :server/do :restart)`). Varsayılan adres `get-host` = `127.0.0.1`, `get-port` = `12315`. Otomatik başlatma: `reset-state!` `:autostart (cfgs/get-item :server/autostart)` okur; `server-indicator` bileşeni açılışta durumu yükler ve `:autostart` doğruysa 1 sn sonra `:server/do :restart` yollar.
+- **doAction biçimi.** `frontend.util/ipc` argümanlarda JS nesnesi yoksa `window.apis.doAction` a transit JSON dizgesi verir; `electron.handler/decode-main-ipc-message` dizge değilse `bean->clj` yapar, `handle` çoklu yöntemi `(keyword (first args))` ile dağıtır ve son öğe `js-obj` ise sonucu `bean->js` döner. Eklenti bu yüzden `["server/do","restart","js-obj"]` dizisini verir (`handle :server/do [_win [_ action]]`).
+- **Sayfa API'leri.** `logseq.api/create_page` var olan sayfayı döndürür (`<get-block name`), `create_journal_page` `YYYY-MM-DD` ya da `Date` alıp `create_page ... {:journal true :redirect false}` çağırır. Eklenti önce `:block/journal-day` sorgusuyla bugünün günlüğünü arar, yoksa `createJournalPage` çağırır.
+
+## Canlı doğrulanmadı
+
+Aşağıdakiler asar okumasına ve birim sınamalara dayanır; çalışan Logseq'te denenmedi:
+
+- `invokeCommand` adresinin gerçek `Logseq.exe` ikinci örneğiyle çalışan örneğe ulaşması ve eklentinin `anindaNot`/`apiSunucusu` modellerinin tetiklenmesi (Windows komut satırı argüman geçişi dahil).
+- Anında notta `logseq.DB.datascriptQuery` ile `:block/journal-day` sorgusu, `Editor.appendBlockInPage(.., "")` ile boş blok, `App.pushState('page', {name: <uuid>})` ve `Editor.editBlock` zinciri; günlük sayfa adı DB ve dosya grafiklerinde farklı olabilir. Sayfa yönlendirmesi için uuid kullanılır.
+- `window.top.apis.doAction` erişimi: eklenti iframe'i ana pencereden yalıtılmışsa `window.top.apis` `SecurityError` verir; bu durumda eklenti "Logseq bu sürümde izin vermiyor" der. Çalışıp çalışmadığı bilinmiyor.
+- Gizli pencereye `second-instance` `focus` çağrısının pencereyi gösterip göstermediği (anında notta pencere zaten önceden gösterilir; API başlat/durdur adresinde gizli pencere belirebilir).
+- Logseq yeniden açıldığında eklentinin araca kendini göstermesinin (hazır işareti) tam zamanlaması; süre dolunca (60 sn) pencere görünüyorsa bir kez denenir.
+- `configs.edn` yazımı yalnız sahte içerikle sınandı; Logseq'in dosyayı kapanırken yeniden yazması, ~4 sn bekleme dışında ölçülmedi.
 
 ## Sınırlar
 
