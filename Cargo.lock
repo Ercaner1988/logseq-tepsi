@@ -39,8 +39,13 @@ dependencies = [
 name = "logseq-tepsi-cekirdek"
 version = "0.1.0"
 dependencies = [
+ "logseq-tepsi-kisayol",
  "toml",
 ]
+
+[[package]]
+name = "logseq-tepsi-kisayol"
+version = "0.1.0"
 
 [[package]]
 name = "logseq-tepsi-logseq"

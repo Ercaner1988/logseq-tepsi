@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "cekirdek", "uc", "sistem", "logseq"]
-default-members = [".", "cekirdek", "uc", "sistem", "logseq"]
+members = [".", "cekirdek", "kisayol", "uc", "sistem", "logseq"]
+default-members = [".", "cekirdek", "kisayol", "uc", "sistem", "logseq"]
 
 [package]
 name = "logseq-tepsi"

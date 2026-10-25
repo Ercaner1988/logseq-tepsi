@@ -3,7 +3,7 @@ name = "logseq-tepsi-sistem"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "logseq-tepsi'nin Windows kurulum katmanı: kayıt defteri, başlangıç kısayolu (COM), kur/kaldir alt komutları."
+description = "logseq-tepsi'nin Windows katmanı: kayıt defteri, başlangıç kısayolu (COM), kur/kaldir alt komutları, genel kısayol kaydı, soluk simge."
 
 [dependencies]
 logseq-tepsi-cekirdek = { path = "../cekirdek" }
@@ -12,4 +12,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Security",
     "Win32_System_Com",
     "Win32_System_Registry",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }

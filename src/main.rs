@@ -6,9 +6,7 @@ mod konsol;
 mod not_gonder;
 mod pencere;
 mod sina;
-mod soluk;
 mod tepsi;
-mod tus;
 mod uc_sunucu;
 
 use logseq_tepsi_cekirdek::komut::Komut;
@@ -17,7 +15,7 @@ use logseq_tepsi_cekirdek::{
     ayar, davranis, gizlenen, gunluk, kisayol, komut, mantik, menu, not, yollar,
 };
 use logseq_tepsi_logseq::{api, yapilandirma};
-use logseq_tepsi_sistem::{kayit, kurulum};
+use logseq_tepsi_sistem::{kayit, kurulum, soluk, tus};
 use logseq_tepsi_uc::{sunucu, uc};
 
 fn main() {

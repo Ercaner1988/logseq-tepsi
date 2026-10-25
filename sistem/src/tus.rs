@@ -2,7 +2,7 @@
 //! Yeni kısayol (ör. anında not) eklemek için yeni bir kimlik sabiti ve ayar yeter; ayrıştırma
 //! çekirdekte (`kisayol`).
 
-use crate::kisayol::Kisayol;
+use logseq_tepsi_cekirdek::kisayol::{self, Kisayol};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{GetLastError, HWND};
@@ -43,9 +43,9 @@ pub fn ayarla(hwnd: HWND, kimlik: i32, istenen: Option<Kisayol>) {
         kayitli.push((kimlik, yeni));
     } else {
         HATALI.fetch_or(1 << kimlik, Ordering::Relaxed);
-        crate::gunluk::yaz(&format!(
+        logseq_tepsi_cekirdek::gunluk::yaz(&format!(
             "genel kisayol kaydedilemedi (kimlik {kimlik}, {}): hata {}; baska program kullaniyor olabilir",
-            crate::kisayol::bicimle(&yeni),
+            kisayol::bicimle(&yeni),
             unsafe { GetLastError() }
         ));
     }

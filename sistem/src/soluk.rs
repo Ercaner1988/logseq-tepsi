@@ -2,7 +2,7 @@
 //! `GetDIBits` ile okur, saf `mantik::solukla_bgra` ile gri/saydam yapar, `CreateIconIndirect` ile
 //! yeni simge kurar. Dönen simgeyi çağıran `DestroyIcon` ile bırakır.
 
-use crate::mantik;
+use logseq_tepsi_cekirdek::mantik;
 use std::ffi::c_void;
 use std::ptr::null_mut;
 use windows_sys::Win32::Graphics::Gdi::{

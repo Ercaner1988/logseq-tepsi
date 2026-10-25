@@ -1,0 +1,6 @@
+[package]
+name = "logseq-tepsi-kisayol"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "logseq-tepsi'nin genel kısayol dizgesi ayrıştırıcısı ve kayıt planı: saf, bağımlılıksız, Win32'siz."
