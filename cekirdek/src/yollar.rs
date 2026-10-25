@@ -262,6 +262,41 @@ pub fn hatirlanmali_mi(yol: &str, kayit: &[KayitAdayi], update_var: impl Fn(&str
     }
 }
 
+pub const SEMA: &str = "logseq-tepsi";
+const KISAYOL_ADI: &str = "Logseq-tepsi.lnk";
+
+/// `%APPDATA%\...\Startup\Logseq-tepsi.lnk`.
+pub fn baslangic_kisayolu(appdata: &str) -> String {
+    format!(
+        r"{}\Microsoft\Windows\Start Menu\Programs\Startup\{KISAYOL_ADI}",
+        appdata.trim_end_matches('\\')
+    )
+}
+
+/// URL şeması kök anahtarı (HKCU altı).
+pub fn sema_anahtari() -> String {
+    format!(r"Software\Classes\{SEMA}")
+}
+
+/// `shell\open\command` anahtarı (HKCU altı).
+pub fn komut_anahtari() -> String {
+    format!(r"{}\shell\open\command", sema_anahtari())
+}
+
+/// Açılış komutu: `"<exe>" --url "%1"`. `--url` argümanı araç tarafından yok sayılır.
+pub fn url_komutu(exe: &str) -> String {
+    format!("\"{exe}\" --url \"%1\"")
+}
+
+/// Yazılacak kayıt değerleri: (anahtar, değer adı ("" = Default), veri).
+pub fn sema_degerleri(exe: &str) -> [(String, &'static str, String); 3] {
+    [
+        (sema_anahtari(), "", format!("URL:{SEMA}")),
+        (sema_anahtari(), "URL Protocol", String::new()),
+        (komut_anahtari(), "", url_komutu(exe)),
+    ]
+}
+
 #[cfg(test)]
 mod testler {
     use super::*;
@@ -565,5 +600,58 @@ mod testler {
         assert_eq!(s[1], r"C:\Users\u\AppData\Local\Programs\Logseq\Logseq.exe");
         assert_eq!(s[2], r"C:\Users\u\AppData\Local\Logseq\Logseq.exe");
         assert_eq!(sabit_yollar(Some("")).len(), 1);
+    }
+
+    #[test]
+    fn kisayol_yolu_startup_altinda() {
+        assert_eq!(
+            baslangic_kisayolu(r"C:\Users\u\AppData\Roaming"),
+            r"C:\Users\u\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Logseq-tepsi.lnk"
+        );
+        assert_eq!(
+            baslangic_kisayolu(r"C:\R\"),
+            r"C:\R\Microsoft\Windows\Start Menu\Programs\Startup\Logseq-tepsi.lnk"
+        );
+    }
+
+    #[test]
+    fn kayit_yollari() {
+        assert_eq!(sema_anahtari(), r"Software\Classes\logseq-tepsi");
+        assert_eq!(
+            komut_anahtari(),
+            r"Software\Classes\logseq-tepsi\shell\open\command"
+        );
+    }
+
+    #[test]
+    fn url_komutu_tirnakli_exe_ve_url_argumani() {
+        assert_eq!(
+            url_komutu(r"C:\Program Files\Araclar\logseq-tepsi.exe"),
+            r#""C:\Program Files\Araclar\logseq-tepsi.exe" --url "%1""#
+        );
+    }
+
+    #[test]
+    fn sema_degerleri_sozlesmeye_uyar() {
+        let d = sema_degerleri(r"C:\a\logseq-tepsi.exe");
+        assert_eq!(
+            d[0],
+            (
+                r"Software\Classes\logseq-tepsi".to_owned(),
+                "",
+                "URL:logseq-tepsi".to_owned()
+            )
+        );
+        assert_eq!(
+            d[1],
+            (
+                r"Software\Classes\logseq-tepsi".to_owned(),
+                "URL Protocol",
+                String::new()
+            )
+        );
+        assert_eq!(d[2].0, r"Software\Classes\logseq-tepsi\shell\open\command");
+        assert_eq!(d[2].1, "");
+        assert_eq!(d[2].2, r#""C:\a\logseq-tepsi.exe" --url "%1""#);
     }
 }

@@ -229,6 +229,44 @@ pub fn ipucu(kanca_tamam: bool) -> &'static str {
     }
 }
 
+/// Logseq'in açık/kapalı durumunu bu aralıkla (ms) yoklayan zamanlayıcı.
+pub const DURUM_YOKLAMA_MS: u32 = 2_000;
+
+/// Tepsi ipucu, Logseq durumuna göre: kapalıyken tıklamanın Logseq'i açtığını söyler;
+/// küçültme izlenemiyorsa (kanca yok) her iki durumda da uyarır.
+pub fn tepsi_ipucu(logseq_acik: bool, kanca_tamam: bool) -> &'static str {
+    match (logseq_acik, kanca_tamam) {
+        (true, _) => ipucu(kanca_tamam),
+        (false, true) => "Logseq kapalı, tıklayınca açılır",
+        (false, false) => "Logseq kapalı, tıklayınca açılır (küçültme izlenemiyor)",
+    }
+}
+
+/// Yoklanan durum öncekinden farklıysa (ya da henüz hiç yazılmadıysa) simge tazelenir.
+pub fn durum_degisti_mi(onceki: Option<bool>, simdi: bool) -> bool {
+    onceki != Some(simdi)
+}
+
+/// Soluk simge için `GetDIBits` BGRA piksellerini yerinde işler: gri tona çevirir, alfayı
+/// kısar. Renk bitmap'inin alfa kanalı tümüyle sıfırsa (eski, alfasız simge) önce maskeden
+/// alfa üretir (`maske`: aynı boyutta 32 bit; siyah = opak, beyaz = saydam).
+pub fn solukla_bgra(piksel: &mut [u8], maske: &[u8]) {
+    let (kareler, _) = piksel.as_chunks_mut::<4>();
+    let alfasiz = kareler.iter().all(|p| p[3] == 0);
+    for (i, p) in kareler.iter_mut().enumerate() {
+        if alfasiz {
+            let opak = maske.get(i * 4).is_some_and(|&m| m == 0);
+            p[3] = if opak { 255 } else { 0 };
+        }
+        let gri = (29 * u32::from(p[0]) + 150 * u32::from(p[1]) + 77 * u32::from(p[2])) >> 8;
+        p[..3].fill(gri as u8);
+        p[3] = (u32::from(p[3]) * SOLUK_ALFA / 256) as u8;
+    }
+}
+
+/// Soluk simgenin alfa çarpanı (256 üzerinden): yaklaşık %45.
+const SOLUK_ALFA: u32 = 115;
+
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_RBUTTONUP: u32 = 0x0205;
 
@@ -593,6 +631,85 @@ mod toplu_testler {
         assert_eq!(ipucu(true), "Logseq");
         assert!(ipucu(false).contains("izlenemiyor"));
         assert!(ipucu(false).encode_utf16().count() < 127);
+    }
+
+    #[test]
+    fn tepsi_ipucu_durumu_soyler() {
+        assert_eq!(tepsi_ipucu(true, true), "Logseq");
+        assert_eq!(tepsi_ipucu(true, false), ipucu(false));
+        assert!(tepsi_ipucu(false, true).contains("kapalı"));
+        assert!(tepsi_ipucu(false, true).contains("tıklayınca açılır"));
+        // Kapalıyken de kanca uyarısı kaybolmaz.
+        assert!(tepsi_ipucu(false, false).contains("kapalı"));
+        assert!(tepsi_ipucu(false, false).contains("izlenemiyor"));
+        for (a, k) in [(true, true), (true, false), (false, true), (false, false)] {
+            // szTip en çok 127 UTF-16 birimi + sonlandırıcı.
+            assert!(tepsi_ipucu(a, k).encode_utf16().count() < 127);
+        }
+    }
+
+    #[test]
+    fn durum_degisti_mi_yalniz_degisimde_ya_da_ilkte() {
+        assert!(durum_degisti_mi(None, true));
+        assert!(durum_degisti_mi(None, false));
+        assert!(!durum_degisti_mi(Some(true), true));
+        assert!(!durum_degisti_mi(Some(false), false));
+        assert!(durum_degisti_mi(Some(true), false));
+        assert!(durum_degisti_mi(Some(false), true));
+    }
+
+    #[test]
+    fn solukla_gri_ton_yapar_ve_alfayi_kisar() {
+        // BGRA: saf kırmızı, saf yeşil, saf mavi, beyaz; hepsi tam opak.
+        let mut p = vec![
+            0, 0, 255, 255, //
+            0, 255, 0, 255, //
+            255, 0, 0, 255, //
+            255, 255, 255, 255,
+        ];
+        solukla_bgra(&mut p, &[]);
+        for piksel in p.as_chunks::<4>().0 {
+            assert_eq!(piksel[0], piksel[1]);
+            assert_eq!(piksel[1], piksel[2]);
+            assert!(piksel[3] < 255 && piksel[3] > 0);
+        }
+        // Parlaklık sırası: yeşil > kırmızı > mavi; beyaz en parlak.
+        assert!(p[4] > p[0] && p[0] > p[8] && p[12] >= p[4]);
+        assert_eq!(p[3], p[7]);
+    }
+
+    #[test]
+    fn solukla_saydam_pikseli_saydam_birakir() {
+        let mut p = vec![10, 200, 30, 0, 90, 90, 90, 128];
+        solukla_bgra(&mut p, &[]);
+        assert_eq!(p[3], 0);
+        assert!(p[7] > 0 && p[7] < 128);
+    }
+
+    #[test]
+    fn solukla_alfasiz_simgede_alfayi_maskeden_uretir() {
+        // Tüm alfa 0: eski biçim. Maske: ilk piksel opak (siyah), ikincisi saydam (beyaz).
+        let mut p = vec![0, 0, 255, 0, 0, 255, 0, 0];
+        let maske = [0, 0, 0, 0, 255, 255, 255, 0];
+        solukla_bgra(&mut p, &maske);
+        assert!(p[3] > 0);
+        assert_eq!(p[7], 0);
+    }
+
+    #[test]
+    fn solukla_alfasiz_ama_maskesiz_tamamen_saydam_kalir() {
+        let mut p = vec![1, 2, 3, 0];
+        solukla_bgra(&mut p, &[]);
+        assert_eq!(p[3], 0);
+    }
+
+    #[test]
+    fn solukla_dortlu_olmayan_kuyrugu_ve_bos_girdiyi_bozmaz() {
+        let mut bos: Vec<u8> = vec![];
+        solukla_bgra(&mut bos, &[]);
+        let mut p = vec![0, 0, 255, 255, 7, 8];
+        solukla_bgra(&mut p, &[]);
+        assert_eq!(&p[4..], &[7, 8]);
     }
 
     #[test]

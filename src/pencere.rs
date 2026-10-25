@@ -394,6 +394,11 @@ pub fn panikte_goster() {
     }
 }
 
+/// Logseq ana penceresi (görünür ya da tepsiye gizlenmiş) var mı; salt okur, her iş parçacığında güvenli.
+pub fn logseq_acik_mi() -> bool {
+    !ana_listesi().is_empty()
+}
+
 /// Tepsi simgesinin menüsünde "Hepsini göster" öğesinin etkinliği için gizli sayısı.
 pub fn gizli_sayisi() -> usize {
     kume().len()

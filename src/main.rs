@@ -6,12 +6,13 @@ mod konsol;
 mod kurulum;
 mod pencere;
 mod sina;
+mod soluk;
 mod tepsi;
 mod uc_sunucu;
 
 use logseq_tepsi_cekirdek::komut::Komut;
 // Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
-use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, onbellek, uc, yollar};
+use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, sunucu, uc, yollar};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

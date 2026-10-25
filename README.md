@@ -4,7 +4,7 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 
 ## Ne yapar
 
-- Tepsiye tek simge koyar (Logseq'in kendi simgesi, ipucu "Logseq"). Simge eklenemezse ya da küçültme kancası kurulamazsa günlüğe yazar, artan gecikmeyle (1 sn ... 30 sn) yeniden dener; kanca yokken ipucu "küçültme izlenemiyor" der.
+- Tepsiye tek simge koyar (Logseq'in kendi simgesi, ipucu "Logseq"). Logseq kapalıyken simge soluk (gri, yarı saydam) görünür ve ipucu "Logseq kapalı, tıklayınca açılır" der (tıklamak Logseq'i açar); durum 2 sn'de bir yoklanır, yalnız değişince simge tazelenir. Simge eklenemezse ya da küçültme kancası kurulamazsa günlüğe yazar, artan gecikmeyle (1 sn ... 30 sn) yeniden dener; kanca yokken ipucu "küçültme izlenemiyor" der.
 - Logseq ana penceresi simge durumuna küçültülünce gizler (görev çubuğu düğmesi kalkar). Olay `SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART)` ile yakalanır; yoklama yok, boşta CPU sıfır. Olay `IsIconic` tazelenmeden gelirse kısa gecikmeyle bir kez daha bakılır.
 - Çok pencere: her pencere ayrı hatırlanır (gizlenenler kümesi). Sol tık: görünür pencere varsa hepsini gizler; yoksa en son gizleneni gösterir (geri yükler, öne getirir); Logseq hiç açık değilse Logseq'i başlatır. Çift tık tek tık sayılır.
 - Açılışta tarama: araç Logseq açıkken başlarsa küçük pencereyi gizler, zaten gizli olanı tepsiden geri getirilebilsin diye hatırlar.

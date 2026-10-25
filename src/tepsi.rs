@@ -3,9 +3,9 @@
 //! iş parçacığı yalnız `PostMessageW` ile iş devreder.
 
 use crate::mantik::{self, KucultmeKarari, MenuEylemi, TepsiOlayi, MENU};
-use crate::{gunluk, pencere, uc_sunucu};
+use crate::{gunluk, pencere, soluk, uc_sunucu};
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WPARAM,
@@ -43,6 +43,8 @@ pub const WM_UC_GOSTER: u32 = WM_APP + 4;
 const YENIDEN_EKLE_ADI: &str = "LogseqTepsiSimgeyiYenidenEkle";
 const ZAMANLAYICI_BAKIM: usize = 1;
 const ZAMANLAYICI_KUCULT: usize = 2;
+/// Logseq açık/kapalı yoklaması (simge ve ipucu durumu).
+const ZAMANLAYICI_DURUM: usize = 3;
 /// En çok bu kadar tık aralığı (ms) çift tık sayılır (sistem çift tık süresinin üst sınırı).
 const CIFT_TIK_TAVANI_MS: u64 = 500;
 
@@ -50,6 +52,10 @@ static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static YENIDEN_EKLE: AtomicU32 = AtomicU32::new(0);
 static ILETI_PENCERESI: AtomicIsize = AtomicIsize::new(0);
 static SIMGE: AtomicIsize = AtomicIsize::new(0);
+/// Logseq kapalıyken gösterilen soluk simge (0: üretilemedi, normal simge kullanılır).
+static SIMGE_SOLUK: AtomicIsize = AtomicIsize::new(0);
+/// Son yoklanan Logseq durumu: 0 henüz bilinmiyor, 1 kapalı, 2 açık.
+static LOGSEQ_DURUMU: AtomicU8 = AtomicU8::new(0);
 static KANCA: AtomicIsize = AtomicIsize::new(0);
 static SIMGE_TAMAM: AtomicBool = AtomicBool::new(false);
 static BAKIM_DENEME: AtomicU32 = AtomicU32::new(0);
@@ -82,8 +88,14 @@ fn bildirim(hwnd: HWND) -> NOTIFYICONDATAW {
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TEPSI;
-    nid.hIcon = SIMGE.load(Ordering::Relaxed) as HICON;
-    let ipucu = mantik::ipucu(KANCA.load(Ordering::Relaxed) != 0);
+    let acik = logseq_acik_kayitli();
+    let soluk_simge = SIMGE_SOLUK.load(Ordering::Relaxed);
+    nid.hIcon = if acik || soluk_simge == 0 {
+        SIMGE.load(Ordering::Relaxed)
+    } else {
+        soluk_simge
+    } as HICON;
+    let ipucu = mantik::tepsi_ipucu(acik, KANCA.load(Ordering::Relaxed) != 0);
     for (i, c) in ipucu.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
         nid.szTip[i] = c;
     }
@@ -106,6 +118,31 @@ fn simge_koy(hwnd: HWND) {
 fn simge_sil(hwnd: HWND) {
     let nid = bildirim(hwnd);
     unsafe { Shell_NotifyIconW(NIM_DELETE, &nid) };
+}
+
+/// Kayıtlı Logseq durumu; henüz yoklanmadıysa açık sayılır (normal simge, eski davranış).
+fn logseq_acik_kayitli() -> bool {
+    LOGSEQ_DURUMU.load(Ordering::Relaxed) != 1
+}
+
+/// Logseq durumunu yoklar ve kaydeder; simge/ipucu çizimi bu kayıttan okur.
+fn durum_oku() -> bool {
+    let acik = pencere::logseq_acik_mi();
+    LOGSEQ_DURUMU.store(if acik { 2 } else { 1 }, Ordering::Relaxed);
+    acik
+}
+
+/// Durum değiştiyse (ya da hiç yazılmadıysa) simgeyi ve ipucunu tazeler; yoksa dokunmaz.
+fn durum_tazele(hwnd: HWND) {
+    let onceki = match LOGSEQ_DURUMU.load(Ordering::Relaxed) {
+        0 => None,
+        v => Some(v == 2),
+    };
+    let simdi = pencere::logseq_acik_mi();
+    if mantik::durum_degisti_mi(onceki, simdi) {
+        durum_oku();
+        simge_koy(hwnd);
+    }
 }
 
 /// Küçültme kancasını kurar; başarısızsa günlüğe yazar (ipucu uyarır, bakım yeniden dener).
@@ -200,6 +237,7 @@ fn menu_ac(hwnd: HWND) {
             return;
         };
         pencere::menu_uygula(eylem);
+        durum_tazele(hwnd);
         // Çıkış: Logseq kapanır, araç tepside kalır (simgeye tıklayınca Logseq yeniden açılır).
         if eylem == MenuEylemi::AraciKapat {
             simge_sil(hwnd);
@@ -209,7 +247,7 @@ fn menu_ac(hwnd: HWND) {
 }
 
 /// Sol tık: çift tığın ikinci bırakması yok sayılır.
-fn sol_tik() {
+fn sol_tik(hwnd: HWND) {
     let simdi = unsafe { GetTickCount64() };
     let onceki = SON_TIK_MS.swap(simdi, Ordering::Relaxed);
     let esik = u64::from(unsafe { GetDoubleClickTime() }).min(CIFT_TIK_TAVANI_MS);
@@ -218,6 +256,7 @@ fn sol_tik() {
         return;
     }
     pencere::tikla();
+    durum_tazele(hwnd);
 }
 
 fn kucultme_isle(hwnd: HWND, h: isize, deneme: u32) {
@@ -233,6 +272,7 @@ fn kucultme_isle(hwnd: HWND, h: isize, deneme: u32) {
 unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     let tb = TASKBAR_CREATED.load(Ordering::Relaxed);
     if tb != 0 && ileti == tb {
+        durum_oku();
         simge_koy(hwnd);
         bakim_planla(hwnd);
         return 0;
@@ -241,6 +281,7 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
     if yeniden != 0 && ileti == yeniden {
         // İkinci kopya (ya da URL şeması) "simgeyi yeniden ekle" dedi.
         gunluk::yaz("simgeyi yeniden ekle iletisi alindi (ikinci kopya)");
+        durum_oku();
         simge_koy(hwnd);
         if KANCA.load(Ordering::Relaxed) == 0 {
             kanca_kur();
@@ -252,7 +293,7 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
     match ileti {
         WM_TEPSI => {
             match mantik::tepsi_olayi(l) {
-                TepsiOlayi::SolTik => sol_tik(),
+                TepsiOlayi::SolTik => sol_tik(hwnd),
                 TepsiOlayi::SagTik => menu_ac(hwnd),
                 TepsiOlayi::Yok => {}
             }
@@ -273,6 +314,7 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
         WM_TIMER => {
             match w {
                 ZAMANLAYICI_BAKIM => bakim(hwnd),
+                ZAMANLAYICI_DURUM => durum_tazele(hwnd),
                 ZAMANLAYICI_KUCULT => {
                     KillTimer(hwnd, ZAMANLAYICI_KUCULT);
                     let bekleyen: Vec<(isize, u32)> = std::mem::take(
@@ -398,8 +440,16 @@ pub fn calistir() {
         gunluk::yaz(&format!("baslatildi (surum {})", env!("CARGO_PKG_VERSION")));
         let simge = simge_yukle();
         SIMGE.store(simge as isize, Ordering::Relaxed);
+        match soluk::uret(simge) {
+            Ok(s) => SIMGE_SOLUK.store(s as isize, Ordering::Relaxed),
+            Err(neden) => gunluk::yaz(&format!(
+                "soluk simge uretilemedi ({neden}); normal simge kullanilacak"
+            )),
+        }
+        durum_oku();
         kanca_kur();
         simge_koy(hwnd);
+        SetTimer(hwnd, ZAMANLAYICI_DURUM, mantik::DURUM_YOKLAMA_MS, None);
         bakim_planla(hwnd);
         pencere::acilis_taramasi();
         uc_sunucu::baslat(hwnd as isize);
@@ -414,5 +464,9 @@ pub fn calistir() {
         }
         simge_sil(hwnd);
         DestroyIcon(simge);
+        let soluk_simge = SIMGE_SOLUK.load(Ordering::Relaxed);
+        if soluk_simge != 0 {
+            DestroyIcon(soluk_simge as HICON);
+        }
     }
 }
