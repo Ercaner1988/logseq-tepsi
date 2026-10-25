@@ -28,6 +28,12 @@ pub fn cozumle(argumanlar: &[String]) -> Komut {
     }
 }
 
+/// Araç başlangıç kısayolundan (oturum açılışı) mı başladı? Kısayol `--oturum` argümanını taşır
+/// (`yollar::BASLANGIC_ARGUMANI`); yalnız ilk argüman sayılır. Komut seçimini değiştirmez.
+pub fn oturum_mu(argumanlar: &[String]) -> bool {
+    argumanlar.first().map(String::as_str) == Some(crate::yollar::BASLANGIC_ARGUMANI)
+}
+
 /// Alt komut çıktı yazar mı? (Yazıyorsa ana konsola bağlanılır.)
 pub fn konsol_gerekir_mi(k: Komut) -> bool {
     k != Komut::Calistir
@@ -72,5 +78,18 @@ mod testler {
         assert!(!konsol_gerekir_mi(Komut::Calistir));
         assert!(konsol_gerekir_mi(Komut::Kur));
         assert!(konsol_gerekir_mi(Komut::SinaPencereler));
+    }
+
+    #[test]
+    fn oturum_argumani_yalniz_ilk_arguman_ve_komutu_degistirmez() {
+        let a = |s: &[&str]| s.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert!(oturum_mu(&a(&["--oturum"])));
+        assert!(!oturum_mu(&a(&[])));
+        assert!(!oturum_mu(&a(&["--url", "--oturum"])));
+        assert!(!oturum_mu(&a(&["--OTURUM"])));
+        assert!(!oturum_mu(&a(&["kur"])));
+        // Aracı normal başlatır (bilinmeyen argüman davranışı), alt komut değil.
+        assert_eq!(c(&["--oturum"]), Komut::Calistir);
+        assert!(!konsol_gerekir_mi(c(&["--oturum"])));
     }
 }

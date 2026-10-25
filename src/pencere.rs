@@ -5,7 +5,7 @@
 
 use crate::gizlenen::Gizlenenler;
 use crate::mantik::{self, AcilisEylemi, Aday, KucultmeKarari, MenuEylemi, PencereDurumu, Toplu};
-use crate::{gunluk, kayit, yollar};
+use crate::{ayar, davranis, gunluk, kayit, yollar};
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -295,11 +295,19 @@ fn hepsini_goster_uygula() {
     sira.into_iter().for_each(|h| goster(h as HWND));
 }
 
-/// Tepsi simgesine sol tık: görünür varsa gizle, yoksa en son gizleneni göster.
+/// Tepsi simgesine sol tık: görünür varsa gizle, yoksa en son gizleneni göster; Logseq kapalıysa
+/// başlat (genel kısayol ve sınama komutları böyle çağırır).
 pub fn tikla() {
+    tikla_ayarli(true);
+}
+
+/// Simge tıkı: `kapaliyken_ac = false` iken Logseq kapalıysa hiçbir şey yapmaz
+/// (`kapaliyken_tik_acar = hayir`).
+pub fn tikla_ayarli(kapaliyken_ac: bool) {
     let p = ana_pencereler();
-    let t = mantik::tikla_toplu(&p, &kume());
-    toplu_uygula(t);
+    if let Some(t) = davranis::tik_toplu_ayarli(mantik::tikla_toplu(&p, &kume()), kapaliyken_ac) {
+        toplu_uygula(t);
+    }
 }
 
 /// Menü eylemi (Çıkış ve Aracı kapat ileti döngüsü sahibinde ele alınır).
@@ -350,7 +358,8 @@ pub fn kucultuldu(hwnd: HWND, deneme: u32) -> KucultmeKarari {
     if !ana_pencere_mi(hwnd) {
         return KucultmeKarari::Birak;
     }
-    let karar = mantik::kucultme_karari(unsafe { IsIconic(hwnd) } != 0, deneme);
+    let kucultme = ayar::guncel().kucultme;
+    let karar = davranis::kucultme_karari_ayarli(kucultme, unsafe { IsIconic(hwnd) } != 0, deneme);
     if karar == KucultmeKarari::Gizle {
         gizle(hwnd);
     }
@@ -359,8 +368,9 @@ pub fn kucultuldu(hwnd: HWND, deneme: u32) -> KucultmeKarari {
 
 /// Açılış taraması: araç Logseq açıkken başladıysa küçük pencereyi gizle, gizli olanı hatırla.
 pub fn acilis_taramasi() {
+    let kucultme = ayar::guncel().kucultme;
     for (h, d) in ana_pencereler() {
-        match mantik::acilis_karari(d) {
+        match davranis::acilis_karari_ayarli(kucultme, d) {
             AcilisEylemi::Gizle => gizle(h as HWND),
             AcilisEylemi::Hatirla => kume().ekle(h),
             AcilisEylemi::Yok => {}
@@ -397,6 +407,11 @@ pub fn panikte_goster() {
 /// Logseq ana penceresi (görünür ya da tepsiye gizlenmiş) var mı; salt okur, her iş parçacığında güvenli.
 pub fn logseq_acik_mi() -> bool {
     !ana_listesi().is_empty()
+}
+
+/// Görünür Logseq ana penceresi sayısı (oturumda gizli başlatma yoklaması); salt okur.
+pub fn gorunur_ana_sayisi() -> usize {
+    ana_listesi().iter().filter(|(_, g)| *g).count()
 }
 
 /// Tepsi simgesinin menüsünde "Hepsini göster" öğesinin etkinliği için gizli sayısı.

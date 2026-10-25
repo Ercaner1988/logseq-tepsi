@@ -4,8 +4,8 @@
 
 use crate::kayit;
 use logseq_tepsi_cekirdek::yollar::{
-    baslangic_kisayolu, kisayol_karari, sema_anahtari, sema_degerleri, url_komutu, KisayolKarari,
-    SEMA,
+    ayni_yol_mu, baslangic_kisayolu, kisayol_karari_argumanli, sema_anahtari, sema_degerleri,
+    url_komutu, KisayolKarari, BASLANGIC_ARGUMANI, SEMA,
 };
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -38,8 +38,8 @@ struct ShellLinkVtbl {
     set_description: unsafe extern "system" fn(*mut c_void, *const u16) -> Hr,
     get_working_directory: Yontem,
     set_working_directory: unsafe extern "system" fn(*mut c_void, *const u16) -> Hr,
-    get_arguments: Yontem,
-    set_arguments: Yontem,
+    get_arguments: unsafe extern "system" fn(*mut c_void, *mut u16, i32) -> Hr,
+    set_arguments: unsafe extern "system" fn(*mut c_void, *const u16) -> Hr,
     get_hotkey: Yontem,
     set_hotkey: Yontem,
     get_show_cmd: Yontem,
@@ -75,8 +75,13 @@ fn genis(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Kısayol dosyasını oluşturur: hedef = exe, çalışma dizini = exe dizini, simge = exe.
+/// Başlangıç kısayolunu `--oturum` argümanıyla yazar (aşağıdaki yazıcı).
 fn kisayol_yaz(lnk: &str, exe: &str) -> Result<(), String> {
+    kisayol_yaz_argumanli(lnk, exe, BASLANGIC_ARGUMANI)
+}
+
+/// Kısayol dosyasını oluşturur: hedef = exe, çalışma dizini = exe dizini, simge = exe.
+fn kisayol_yaz_argumanli(lnk: &str, exe: &str, arguman: &str) -> Result<(), String> {
     let dizin = PathBuf::from(exe)
         .parent()
         .map(|p| p.display().to_string())
@@ -101,12 +106,16 @@ fn kisayol_yaz(lnk: &str, exe: &str) -> Result<(), String> {
             }
             let kisayol = ham as *mut Nesne<ShellLinkVtbl>;
             let v = &*(*kisayol).vtbl;
-            let (exe_g, dizin_g, ac_g) = (
+            let (exe_g, dizin_g, ac_g, arguman_g) = (
                 genis(exe),
                 genis(&dizin),
                 genis("Logseq'i küçültünce tepsiye gizler"),
+                genis(arguman),
             );
             let mut hr = (v.set_path)(ham, exe_g.as_ptr());
+            if hr >= 0 {
+                hr = (v.set_arguments)(ham, arguman_g.as_ptr());
+            }
             if hr >= 0 {
                 hr = (v.set_working_directory)(ham, dizin_g.as_ptr());
             }
@@ -141,8 +150,14 @@ fn kisayol_yaz(lnk: &str, exe: &str) -> Result<(), String> {
 /// `IShellLinkW::GetPath` bayrağı: ortam değişkenleri açılmamış ham yol.
 const SLGP_RAWPATH: u32 = 4;
 
-/// Var olan kısayolun gösterdiği hedef yol (okunamazsa hata).
+/// Var olan kısayolun gösterdiği hedef yol (okunamazsa hata); yalnız sınamalar kullanır.
+#[cfg(test)]
 fn kisayol_hedefi(lnk: &str) -> Result<String, String> {
+    kisayol_oku(lnk).map(|(hedef, _)| hedef)
+}
+
+/// Var olan kısayolun (hedef yol, komut satırı argümanı) çifti (okunamazsa hata).
+fn kisayol_oku(lnk: &str) -> Result<(String, String), String> {
     // SAFETY: COM çağrıları tek iş parçacığında; her arayüz işaretçisi Release edilir.
     unsafe {
         let hr = CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
@@ -164,7 +179,7 @@ fn kisayol_hedefi(lnk: &str) -> Result<String, String> {
             let v = &*(*(ham as *mut Nesne<ShellLinkVtbl>)).vtbl;
             let mut dosya_ham: *mut c_void = null_mut();
             let mut hr = (v.temel.query_interface)(ham, &IID_IPERSIST_FILE, &mut dosya_ham);
-            let mut yol = String::new();
+            let mut yol = (String::new(), String::new());
             if hr >= 0 && !dosya_ham.is_null() {
                 let dosya = dosya_ham as *mut Nesne<PersistFileVtbl>;
                 hr = ((*(*dosya).vtbl).load)(dosya_ham, genis(lnk).as_ptr(), 0);
@@ -179,7 +194,13 @@ fn kisayol_hedefi(lnk: &str) -> Result<String, String> {
                         SLGP_RAWPATH,
                     );
                     let n = t.iter().position(|&c| c == 0).unwrap_or(t.len());
-                    yol = String::from_utf16_lossy(&t[..n]);
+                    yol.0 = String::from_utf16_lossy(&t[..n]);
+                    if hr >= 0 {
+                        let mut a = [0u16; 1024];
+                        hr = (v.get_arguments)(ham, a.as_mut_ptr(), a.len() as i32);
+                        let n = a.iter().position(|&c| c == 0).unwrap_or(a.len());
+                        yol.1 = String::from_utf16_lossy(&a[..n]);
+                    }
                 }
             }
             (v.temel.release)(ham);
@@ -194,16 +215,21 @@ fn kisayol_hedefi(lnk: &str) -> Result<String, String> {
     }
 }
 
-/// Başlangıç kısayolunu bu exe'ye göre kurar: yoksa oluşturur, başka exe'yi gösteriyorsa (ya da
-/// okunamıyorsa) yeniden yazar, aynıysa dokunmaz. Yapılanı düz metinle döndürür.
+/// Başlangıç kısayolunu bu exe'ye göre kurar: yoksa oluşturur; başka exe'yi gösteriyorsa, argümanı
+/// `--oturum` değilse ya da okunamıyorsa yeniden yazar; aynıysa dokunmaz. Yapılanı düz metinle
+/// döndürür.
 fn kisayolu_duzenle(lnk: &str, exe: &str) -> Result<String, String> {
     let var = std::path::Path::new(lnk).exists();
-    let hedef = if var {
-        kisayol_hedefi(lnk)
+    let okunan = if var {
+        kisayol_oku(lnk)
     } else {
-        Ok(String::new())
+        Ok((String::new(), String::new()))
     };
-    match kisayol_karari(var, hedef.as_deref().ok(), exe) {
+    let (hedef, arguman) = match &okunan {
+        Ok((h, a)) => (Some(h.as_str()), Some(a.as_str())),
+        Err(_) => (None, None),
+    };
+    match kisayol_karari_argumanli(var, hedef, arguman, exe) {
         KisayolKarari::Dokunma => Ok("zaten var, bu exe'yi gösteriyor, dokunulmadı".into()),
         KisayolKarari::Olustur => {
             kisayol_yaz(lnk, exe)?;
@@ -211,14 +237,39 @@ fn kisayolu_duzenle(lnk: &str, exe: &str) -> Result<String, String> {
         }
         KisayolKarari::Yeniden => {
             kisayol_yaz(lnk, exe)?;
-            Ok(match hedef {
-                Ok(eski) if !eski.is_empty() => format!(
+            Ok(match okunan {
+                Ok((eski, a)) if ayni_yol_mu(&eski, exe) => format!(
+                    "bu exe'yi gösteriyordu ama argümanı {a:?} idi; {BASLANGIC_ARGUMANI} argümanıyla yeniden yazıldı"
+                ),
+                Ok((eski, _)) if !eski.is_empty() => format!(
                     "başka bir exe'yi gösteriyordu ({eski}); bu exe'ye göre yeniden yazıldı"
                 ),
                 Ok(_) => "hedefi boştu; bu exe'ye göre yeniden yazıldı".into(),
                 Err(e) => format!("hedefi okunamadı ({e}); bu exe'ye göre yeniden yazıldı"),
             })
         }
+    }
+}
+
+/// Başlangıç kısayolu var mı? Kısayol dosyasının varlığı gerçeğin kendisidir (COM yok, ucuz).
+pub fn baslangic_var_mi() -> bool {
+    kisayol_yolu().is_ok_and(|lnk| std::path::Path::new(&lnk).exists())
+}
+
+/// "Bilgisayar açılınca başlat": `ac` ise başlangıç kısayolunu kurar (`kur`un kısayol adımı),
+/// değilse siler. URL şemasına dokunmaz. Yapılanı düz metinle döndürür.
+pub fn baslangic_ayarla(ac: bool) -> Result<String, String> {
+    baslangic_degistir(&kisayol_yolu()?, &exe_yolu()?, ac)
+}
+
+fn baslangic_degistir(lnk: &str, exe: &str, ac: bool) -> Result<String, String> {
+    if ac {
+        return kisayolu_duzenle(lnk, exe);
+    }
+    match std::fs::remove_file(lnk) {
+        Ok(()) => Ok("silindi".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("zaten yoktu".into()),
+        Err(e) => Err(format!("kısayol silinemedi ({lnk}): {e}")),
     }
 }
 
@@ -374,5 +425,62 @@ mod testler {
         let p = std::mem::size_of::<usize>();
         assert_eq!(std::mem::size_of::<ShellLinkVtbl>(), 21 * p);
         assert_eq!(std::mem::size_of::<PersistFileVtbl>(), 9 * p);
+    }
+
+    fn gecici_dizin(ad: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("logseq-tepsi-{ad}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// `kur` kısayolu `--oturum` argümanıyla yazar; hedef aynı ama argüman farklıysa (eski kurulum
+    /// ya da elle değişmiş) yeniden yazar ve nedenini söyler.
+    #[test]
+    fn kisayol_oturum_arguman_yazilir_farkliysa_yeniden_yazilir() {
+        let dir = gecici_dizin("arg");
+        let lnk = dir.join("Logseq-tepsi.lnk");
+        let lnk_s = lnk.to_str().unwrap();
+        let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
+
+        kisayolu_duzenle(lnk_s, exe).unwrap();
+        let (hedef, arguman) = kisayol_oku(lnk_s).unwrap();
+        assert_eq!((hedef.as_str(), arguman.as_str()), (exe, "--oturum"));
+
+        // Eski kurulumu taklit et: aynı hedef, argümansız kısayol.
+        kisayol_yaz_argumanli(lnk_s, exe, "").unwrap();
+        assert_eq!(kisayol_oku(lnk_s).unwrap().1, "");
+        let mesaj = kisayolu_duzenle(lnk_s, exe).unwrap();
+        assert!(
+            mesaj.contains("argümanı") && mesaj.contains("yeniden yazıldı"),
+            "{mesaj}"
+        );
+        assert_eq!(kisayol_oku(lnk_s).unwrap().1, "--oturum");
+        let ayni = kisayolu_duzenle(lnk_s, exe).unwrap();
+        assert!(ayni.contains("dokunulmadı"), "{ayni}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Menüdeki "Bilgisayar açılınca başlat": açınca kısayol kurulur, kapatınca silinir; ikisi de
+    /// tekrarlanabilir (idempotent). Yalnız geçici dizine yazar.
+    #[test]
+    fn baslangic_degistir_kurar_ve_siler() {
+        let dir = gecici_dizin("bas");
+        let lnk = dir.join("Logseq-tepsi.lnk");
+        let lnk_s = lnk.to_str().unwrap();
+        let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
+
+        assert_eq!(
+            baslangic_degistir(lnk_s, exe, false).unwrap(),
+            "zaten yoktu"
+        );
+        assert_eq!(baslangic_degistir(lnk_s, exe, true).unwrap(), "oluşturuldu");
+        assert!(lnk.exists());
+        assert!(baslangic_degistir(lnk_s, exe, true)
+            .unwrap()
+            .contains("dokunulmadı"));
+        assert_eq!(baslangic_degistir(lnk_s, exe, false).unwrap(), "silindi");
+        assert!(!lnk.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

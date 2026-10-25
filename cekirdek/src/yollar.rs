@@ -183,6 +183,26 @@ pub fn kisayol_karari(var: bool, hedef: Option<&str>, exe: &str) -> KisayolKarar
     }
 }
 
+/// Başlangıç kısayolunun komut satırı argümanı: araç oturum açılışında başladığını bundan anlar
+/// (`oturumda_gizli_baslat` yalnız bu argümanla başlayınca geçerli olur).
+pub const BASLANGIC_ARGUMANI: &str = "--oturum";
+
+/// `kisayol_karari` + argüman: hedef aynı ama argüman farklıysa (eski kurulum, elle değişmiş)
+/// da yeniden yazılır. `arguman`: kısayolun argümanı (okunamadıysa `None`).
+pub fn kisayol_karari_argumanli(
+    var: bool,
+    hedef: Option<&str>,
+    arguman: Option<&str>,
+    exe: &str,
+) -> KisayolKarari {
+    match kisayol_karari(var, hedef, exe) {
+        KisayolKarari::Dokunma if arguman.map(str::trim) != Some(BASLANGIC_ARGUMANI) => {
+            KisayolKarari::Yeniden
+        }
+        k => k,
+    }
+}
+
 /// Ayar dosyası içeriği: ilk dolu satır (BOM atılır) `Logseq.exe` yolu olmalı.
 pub fn ayar_yolu(icerik: &str) -> Option<String> {
     let satir = icerik
@@ -653,5 +673,40 @@ mod testler {
         assert_eq!(d[2].0, r"Software\Classes\logseq-tepsi\shell\open\command");
         assert_eq!(d[2].1, "");
         assert_eq!(d[2].2, r#""C:\a\logseq-tepsi.exe" --url "%1""#);
+    }
+
+    #[test]
+    fn kisayol_karari_arguman_farkliysa_yeniden() {
+        let exe = r"C:\A\logseq-tepsi.exe";
+        let karar = |var, hedef, arg| kisayol_karari_argumanli(var, hedef, arg, exe);
+        // Hedef aynı + doğru argüman: dokunma (boşluk yok sayılır).
+        assert_eq!(
+            karar(true, Some(exe), Some("--oturum")),
+            KisayolKarari::Dokunma
+        );
+        assert_eq!(
+            karar(true, Some(exe), Some(" --oturum ")),
+            KisayolKarari::Dokunma
+        );
+        // Hedef aynı ama argüman eksik/farklı/okunamadı: yeniden yaz.
+        for arg in [
+            Some(""),
+            Some("--url x"),
+            Some("--OTURUM"),
+            Some("--oturum x"),
+            None,
+        ] {
+            assert_eq!(
+                karar(true, Some(exe), arg),
+                KisayolKarari::Yeniden,
+                "{arg:?}"
+            );
+        }
+        // Öbür kararlar değişmez.
+        assert_eq!(karar(false, None, None), KisayolKarari::Olustur);
+        assert_eq!(
+            karar(true, Some(r"C:\eski\x.exe"), Some("--oturum")),
+            KisayolKarari::Yeniden
+        );
     }
 }

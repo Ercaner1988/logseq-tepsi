@@ -1,9 +1,15 @@
 //! Yerel uç (eklenti ↔ araç): en küçük HTTP/1.1 ayrıştırıcı ve yetki kararı.
 //! Saf kod: ağ, Win32 ve saat yok. Sözleşme (eklenti buna güvenir, DEĞİŞTİRME):
-//! `GET /durum`, `POST /gizle`, `POST /goster`; `X-Logseq-Tepsi: 1` zorunlu; `Origin`
-//! varsa izin listesinde olmalı; `OPTIONS` ön uçuşu.
+//! `GET /durum`, `POST /gizle`, `POST /goster`, `GET|POST /ayar` (düz metin `anahtar=değer`
+//! satırları); `X-Logseq-Tepsi: 1` zorunlu; `Origin` varsa izin listesinde olmalı; `OPTIONS`
+//! ön uçuşu. Gövde yalnız `POST /ayar` için okunur (`Content-Length` zorunlu, en çok
+//! `GOVDE_TAVANI`); öbür isteklerde gövde yok sayılır.
+
+use logseq_tepsi_cekirdek::ayar::{self, AyarDegeri};
 
 pub const PORT: u16 = 47123;
+/// `POST /ayar` gövdesi üst sınırı (bayt).
+pub const GOVDE_TAVANI: usize = 1024;
 /// Başlık bloğu üst sınırı (bayt).
 pub const ISTEK_TAVANI: usize = 8 * 1024;
 /// Bir isteğin tamamını okumak için toplam süre.
@@ -103,11 +109,13 @@ pub fn ayristir(tampon: &[u8]) -> Result<Istek, AyrisHatasi> {
 }
 
 /// Sunucunun istek üzerine yapacağı pencere işi (ileti penceresine devredilir).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Is {
     Yok,
     Gizle,
     Goster,
+    /// Doğrulanmış ayar değişiklikleri; uygulama ve kayıt ileti döngüsünde yapılır.
+    Ayar(Vec<AyarDegeri>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +135,8 @@ fn sebep(kod: u16) -> &'static str {
         404 => "Not Found",
         405 => "Method Not Allowed",
         408 => "Request Timeout",
+        411 => "Length Required",
+        413 => "Content Too Large",
         431 => "Request Header Fields Too Large",
         503 => "Service Unavailable",
         _ => "Error",
@@ -186,9 +196,64 @@ pub fn durum_govdesi(surum: &str, gizli: usize, logseq_acik: bool) -> String {
     format!("logseq-tepsi {surum}\ngizli={gizli}\nlogseq={logseq}\n")
 }
 
-/// Yetki + yönlendirme kararı. `durum` yalnız yetkili `GET /durum` için çağrılır
-/// (pencere sayımı pahalı olabilir): (tepside gizli pencere sayısı, Logseq açık mı).
-pub fn karar_ver(istek: &Istek, surum: &str, durum: impl FnOnce() -> (usize, bool)) -> Yanit {
+/// OPTIONS dışı isteğin yetkisi tamam mı (Host, Origin, özel başlık)? Sunucu gövdeyi yalnız
+/// yetkili istek için okur; karar yine `karar_ver`dedir.
+pub fn yetkili_mi(istek: &Istek) -> bool {
+    istek.metot != "OPTIONS"
+        && istek.baslik("host").is_none_or(host_izinli_mi)
+        && istek.baslik("origin").is_none_or(origin_izinli_mi)
+        && istek.baslik(YETKI_BASLIGI) == Some("1")
+}
+
+/// Bu istek gövde okutur mu? (Yalnız `POST /ayar`.)
+pub fn govde_gerekli_mi(istek: &Istek) -> bool {
+    istek.metot == "POST" && istek.yol == "/ayar"
+}
+
+/// `Content-Length` değeri; yoksa 411, sayı değilse 400, tavanı aşarsa 413 (CORS başlıklı).
+pub fn govde_uzunlugu(istek: &Istek) -> Result<usize, Yanit> {
+    let cors = cors_basliklari(istek.baslik("origin"));
+    let ham = istek
+        .baslik("content-length")
+        .ok_or_else(|| hata(411, cors.clone()))?;
+    if ham.is_empty() || !ham.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(hata(400, cors));
+    }
+    match ham.parse::<usize>() {
+        Ok(n) if n <= GOVDE_TAVANI => Ok(n),
+        _ => Err(hata(413, cors)),
+    }
+}
+
+/// `POST /ayar`: gövde geçerliyse 204 + `Is::Ayar`, değilse 400 (nedenle birlikte).
+fn ayar_yaniti(govde: &[u8], cors: Vec<(String, String)>) -> Yanit {
+    let coz = std::str::from_utf8(govde)
+        .map_err(|_| "gövde UTF-8 değil".to_owned())
+        .and_then(ayar::satirlari_coz);
+    match coz {
+        Ok(degerler) => Yanit {
+            kod: 204,
+            govde: String::new(),
+            basliklar: cors,
+            is: Is::Ayar(degerler),
+        },
+        Err(neden) => Yanit {
+            govde: format!("400 Bad Request\n{neden}\n"),
+            ..hata(400, cors)
+        },
+    }
+}
+
+/// Yetki + yönlendirme kararı. `durum` yalnız yetkili `GET /durum` için, `ayar_metni` yalnız
+/// yetkili `GET /ayar` için çağrılır (pencere sayımı pahalı olabilir): durum = (tepside gizli
+/// pencere sayısı, Logseq açık mı). `govde`: yalnız `POST /ayar` için anlamlı.
+pub fn karar_ver(
+    istek: &Istek,
+    govde: &[u8],
+    surum: &str,
+    durum: impl FnOnce() -> (usize, bool),
+    ayar_metni: impl FnOnce() -> String,
+) -> Yanit {
     if istek.baslik("host").is_some_and(|h| !host_izinli_mi(h)) {
         return hata(403, Vec::new());
     }
@@ -241,9 +306,17 @@ pub fn karar_ver(istek: &Istek, surum: &str, durum: impl FnOnce() -> (usize, boo
                 is: Is::Yok,
             }
         }
+        ("GET", "/ayar") => Yanit {
+            kod: 200,
+            govde: ayar_metni(),
+            basliklar: cors_basliklari(origin),
+            is: Is::Yok,
+        },
+        ("POST", "/ayar") => ayar_yaniti(govde, cors),
         ("POST", "/gizle") => yetkili(204, Is::Gizle),
         ("POST", "/goster") => yetkili(204, Is::Goster),
         (_, "/durum") => yanit_405("GET", cors),
+        (_, "/ayar") => yanit_405("GET, POST", cors),
         (_, "/gizle" | "/goster") => yanit_405("POST", cors),
         _ => hata(404, cors),
     }
@@ -292,7 +365,17 @@ mod testler {
     const YETKI: (&str, &str) = ("X-Logseq-Tepsi", "1");
 
     fn sor(i: &Istek) -> Yanit {
-        karar_ver(i, "9.9.9", || (2, true))
+        karar_ver(
+            i,
+            &[],
+            "9.9.9",
+            || (2, true),
+            || {
+                "tik=tek
+"
+                .into()
+            },
+        )
     }
 
     fn baslik<'a>(y: &'a Yanit, ad: &str) -> Option<&'a str> {
@@ -421,10 +504,16 @@ mod testler {
     #[test]
     fn yetkisiz_istek_pencere_sayimi_yaptirmaz_yol_sizdirmaz() {
         let mut cagrildi = false;
-        let r = karar_ver(&istek("GET", "/durum", &[]), "1", || {
-            cagrildi = true;
-            (0, false)
-        });
+        let r = karar_ver(
+            &istek("GET", "/durum", &[]),
+            &[],
+            "1",
+            || {
+                cagrildi = true;
+                (0, false)
+            },
+            String::new,
+        );
         assert_eq!(r.kod, 403);
         assert!(!cagrildi);
         // Yetkisiz isteğe bilinmeyen yol da 404 değil 403 (yol varlığı sızmaz).
@@ -606,10 +695,10 @@ mod testler {
         let r = sor(&istek("GET", "/yok", &[YETKI]));
         assert_eq!((r.kod, r.is), (404, Is::Yok));
         let r = sor(&istek("GET", "/gizle", &[YETKI]));
-        assert_eq!((r.kod, r.is), (405, Is::Yok));
+        assert_eq!((r.kod, r.is.clone()), (405, Is::Yok));
         assert_eq!(baslik(&r, "Allow"), Some("POST"));
         let r = sor(&istek("POST", "/durum", &[YETKI]));
-        assert_eq!((r.kod, r.is), (405, Is::Yok));
+        assert_eq!((r.kod, r.is.clone()), (405, Is::Yok));
         assert_eq!(baslik(&r, "Allow"), Some("GET"));
         let r = sor(&istek("DELETE", "/gizle", &[YETKI]));
         assert_eq!((r.kod, r.is), (405, Is::Yok));
@@ -664,5 +753,158 @@ mod testler {
         assert!(s(&zaman_asimi_yaniti()).starts_with("HTTP/1.1 408 Request Timeout\r\n"));
         let y = sor(&istek("GET", "/yok", &[YETKI]));
         assert!(s(&y).starts_with("HTTP/1.1 404 Not Found\r\n"));
+    }
+
+    // --- /ayar ---
+
+    fn ayar_post(govde: &str, ekstra: &[(&str, &str)]) -> Yanit {
+        let mut b = vec![YETKI];
+        b.extend_from_slice(ekstra);
+        karar_ver(
+            &istek("POST", "/ayar", &b),
+            govde.as_bytes(),
+            "9.9.9",
+            || (2, true),
+            || "tik=tek\n".into(),
+        )
+    }
+
+    #[test]
+    fn get_ayar_yetkiliyse_saglayici_metnini_verir() {
+        let r = sor(&istek("GET", "/ayar", &[YETKI]));
+        assert_eq!((r.kod, r.govde.as_str(), r.is), (200, "tik=tek\n", Is::Yok));
+        let r = sor(&istek(
+            "GET",
+            "/ayar",
+            &[YETKI, ("Origin", "lsp://logseq.io")],
+        ));
+        assert_eq!(
+            baslik(&r, "Access-Control-Allow-Origin"),
+            Some("lsp://logseq.io")
+        );
+    }
+
+    #[test]
+    fn ayar_yetkisiz_istek_saglayiciyi_cagirmaz_403() {
+        let mut cagrildi = false;
+        let r = karar_ver(
+            &istek("GET", "/ayar", &[]),
+            &[],
+            "1",
+            || (0, false),
+            || {
+                cagrildi = true;
+                String::new()
+            },
+        );
+        assert_eq!(r.kod, 403);
+        assert!(!cagrildi, "yetkisiz istek ayar metnini ürettirmemeli");
+        for (ek, ad) in [
+            (("Origin", "https://evil.example"), "yabancı origin"),
+            (("Host", "evil.example:47123"), "yabancı host"),
+            (("Origin", "null"), "null origin"),
+        ] {
+            let r = ayar_post("tik=cift\n", &[ek]);
+            assert_eq!((r.kod, r.is), (403, Is::Yok), "{ad}");
+        }
+        let r = karar_ver(
+            &istek("POST", "/ayar", &[]),
+            b"tik=cift",
+            "1",
+            || (0, false),
+            String::new,
+        );
+        assert_eq!((r.kod, r.is), (403, Is::Yok));
+    }
+
+    #[test]
+    fn post_ayar_gecerli_204_is_ayar_gecersiz_400() {
+        let r = ayar_post("tik=cift\r\nkisayol_goster_gizle=ctrl+alt+x", &[]);
+        assert_eq!(r.kod, 204);
+        assert_eq!(
+            r.is,
+            Is::Ayar(vec![
+                AyarDegeri::Tik(logseq_tepsi_cekirdek::ayar::Tik::Cift),
+                AyarDegeri::KisayolGosterGizle("Ctrl+Alt+X".into()),
+            ])
+        );
+        for kotu in [
+            "",
+            "tik=uc",
+            "x=1",
+            "tik=cift\nkisayol_goster_gizle=Ctrl+Alt+İ",
+        ] {
+            let r = ayar_post(kotu, &[]);
+            assert_eq!((r.kod, r.is), (400, Is::Yok), "{kotu:?}");
+            assert!(r.govde.starts_with("400 Bad Request\n"), "{}", r.govde);
+        }
+        let r = karar_ver(
+            &istek("POST", "/ayar", &[YETKI]),
+            &[0xFF, 0xFE],
+            "1",
+            || (0, false),
+            String::new,
+        );
+        assert_eq!(r.kod, 400);
+    }
+
+    #[test]
+    fn ayar_yolu_yanlis_metot_405_allow() {
+        for m in ["PUT", "DELETE", "PATCH"] {
+            let r = sor(&istek(m, "/ayar", &[YETKI]));
+            assert_eq!(r.kod, 405, "{m}");
+            assert_eq!(baslik(&r, "Allow"), Some("GET, POST"));
+        }
+    }
+
+    #[test]
+    fn govde_uzunlugu_kurallari() {
+        let u = |d: Option<&str>| {
+            let b: Vec<(&str, &str)> = d.map(|v| ("Content-Length", v)).into_iter().collect();
+            govde_uzunlugu(&istek("POST", "/ayar", &b)).map_err(|y| y.kod)
+        };
+        assert_eq!(u(Some("0")), Ok(0));
+        assert_eq!(u(Some("12")), Ok(12));
+        assert_eq!(u(Some("1024")), Ok(1024));
+        assert_eq!(u(Some("1025")), Err(413));
+        assert_eq!(u(Some("99999999999999999999999")), Err(413));
+        assert_eq!(u(None), Err(411));
+        for kotu in ["", "-1", "+5", "1x", " "] {
+            assert_eq!(u(Some(kotu)), Err(400), "{kotu:?}");
+        }
+        assert!(govde_gerekli_mi(&istek("POST", "/ayar", &[])));
+        assert!(!govde_gerekli_mi(&istek("POST", "/gizle", &[])));
+        assert!(!govde_gerekli_mi(&istek("GET", "/ayar", &[])));
+    }
+
+    #[test]
+    fn yetkili_mi_karar_ver_ile_tutarli() {
+        assert!(yetkili_mi(&istek("POST", "/ayar", &[YETKI])));
+        assert!(yetkili_mi(&istek(
+            "POST",
+            "/ayar",
+            &[
+                YETKI,
+                ("Origin", "lsp://logseq.io"),
+                ("Host", "localhost:47123")
+            ]
+        )));
+        assert!(!yetkili_mi(&istek("POST", "/ayar", &[])));
+        assert!(!yetkili_mi(&istek(
+            "POST",
+            "/ayar",
+            &[("X-Logseq-Tepsi", "0")]
+        )));
+        assert!(!yetkili_mi(&istek(
+            "POST",
+            "/ayar",
+            &[YETKI, ("Origin", "null")]
+        )));
+        assert!(!yetkili_mi(&istek(
+            "POST",
+            "/ayar",
+            &[YETKI, ("Host", "x:47123")]
+        )));
+        assert!(!yetkili_mi(&istek("OPTIONS", "/ayar", &[YETKI])));
     }
 }

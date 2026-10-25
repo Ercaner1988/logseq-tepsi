@@ -1,16 +1,20 @@
 #![windows_subsystem = "windows"]
 //! Logseq'i küçültünce sistem tepsisine gizler. Ayrıntı: README.md.
 
+mod ayarlar;
 mod konsol;
 mod pencere;
 mod sina;
 mod soluk;
 mod tepsi;
+mod tus;
 mod uc_sunucu;
 
 use logseq_tepsi_cekirdek::komut::Komut;
 // Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
-use logseq_tepsi_cekirdek::{gizlenen, gunluk, komut, mantik, yollar};
+use logseq_tepsi_cekirdek::{
+    ayar, davranis, gizlenen, gunluk, kisayol, komut, mantik, menu, yollar,
+};
 use logseq_tepsi_sistem::{kayit, kurulum};
 use logseq_tepsi_uc::{sunucu, uc};
 
@@ -23,7 +27,7 @@ fn main() {
     match komut {
         Komut::Calistir => {
             gunluk::panik_kancasi_kur(pencere::panikte_goster);
-            tepsi::calistir();
+            tepsi::calistir(komut::oturum_mu(&args));
         }
         Komut::Kur => std::process::exit(kurulum::kur()),
         Komut::Kaldir => std::process::exit(kurulum::kaldir()),

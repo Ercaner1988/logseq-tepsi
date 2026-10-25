@@ -2,8 +2,10 @@
 //! Tüm pencere işleri bu (ileti döngüsü) iş parçacığında yapılır; kanca ve yerel uç
 //! iş parçacığı yalnız `PostMessageW` ile iş devreder.
 
+use crate::ayar::AyarDegeri;
 use crate::mantik::{self, KucultmeKarari, MenuEylemi, TepsiOlayi, MENU};
-use crate::{gunluk, pencere, soluk, uc_sunucu};
+use crate::menu::{self, Tur};
+use crate::{ayar, ayarlar, davranis, gunluk, kisayol, kurulum, pencere, soluk, tus, uc_sunucu};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
@@ -23,13 +25,13 @@ use windows_sys::Win32::UI::Shell::{
     NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-    DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, KillTimer, LoadIconW, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer,
-    TrackPopupMenu, TranslateMessage, EVENT_SYSTEM_MINIMIZESTART, HICON, IDI_APPLICATION,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, OBJID_WINDOW, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_DESTROY, WM_ENDSESSION, WM_NULL,
-    WM_QUERYENDSESSION, WM_TIMER, WNDCLASSW,
+    AppendMenuW, CheckMenuRadioItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon,
+    DestroyMenu, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, KillTimer, LoadIconW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+    SetTimer, TrackPopupMenu, TranslateMessage, EVENT_SYSTEM_MINIMIZESTART, HICON, IDI_APPLICATION,
+    MF_BYCOMMAND, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, OBJID_WINDOW,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+    WM_DESTROY, WM_ENDSESSION, WM_HOTKEY, WM_NULL, WM_QUERYENDSESSION, WM_TIMER, WNDCLASSW,
 };
 
 pub const ILETI_SINIFI: &str = "LogseqTepsiIletiPenceresi";
@@ -39,12 +41,16 @@ const WM_KUCULTULDU: u32 = WM_APP + 2;
 /// Yerel uçtan: görünür ana pencereleri gizle / tepsidekileri göster.
 pub const WM_UC_GIZLE: u32 = WM_APP + 3;
 pub const WM_UC_GOSTER: u32 = WM_APP + 4;
+/// Yerel uçtan: kuyruktaki doğrulanmış ayar değişikliklerini uygula ve kaydet.
+pub const WM_UC_AYAR: u32 = WM_APP + 5;
 /// İkinci kopyanın mevcut kopyaya yolladığı kayıtlı ileti adı.
 const YENIDEN_EKLE_ADI: &str = "LogseqTepsiSimgeyiYenidenEkle";
 const ZAMANLAYICI_BAKIM: usize = 1;
 const ZAMANLAYICI_KUCULT: usize = 2;
 /// Logseq açık/kapalı yoklaması (simge ve ipucu durumu).
 const ZAMANLAYICI_DURUM: usize = 3;
+/// Oturumda gizli başlatma: Logseq ana penceresi görününce gizlemek için yoklama.
+const ZAMANLAYICI_OTURUM: usize = 4;
 /// En çok bu kadar tık aralığı (ms) çift tık sayılır (sistem çift tık süresinin üst sınırı).
 const CIFT_TIK_TAVANI_MS: u64 = 500;
 
@@ -60,6 +66,8 @@ static KANCA: AtomicIsize = AtomicIsize::new(0);
 static SIMGE_TAMAM: AtomicBool = AtomicBool::new(false);
 static BAKIM_DENEME: AtomicU32 = AtomicU32::new(0);
 static SON_TIK_MS: AtomicU64 = AtomicU64::new(u64::MAX);
+/// Oturumda gizli başlatma yoklamasının başlangıcı (`GetTickCount64`, ms).
+static OTURUM_BASLANGIC_MS: AtomicU64 = AtomicU64::new(0);
 /// Küçültme yarışı için bekleyen (pencere, deneme) çiftleri.
 static BEKLEYEN_KUCULTME: Mutex<Vec<(isize, u32)>> = Mutex::new(Vec::new());
 
@@ -95,7 +103,12 @@ fn bildirim(hwnd: HWND) -> NOTIFYICONDATAW {
     } else {
         soluk_simge
     } as HICON;
-    let ipucu = mantik::tepsi_ipucu(acik, KANCA.load(Ordering::Relaxed) != 0);
+    let ipucu = davranis::ipucu_ayarli(
+        acik,
+        KANCA.load(Ordering::Relaxed) != 0,
+        &ayar::guncel(),
+        tus::hatali_mi(tus::KIMLIK_GOSTER_GIZLE),
+    );
     for (i, c) in ipucu.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
         nid.szTip[i] = c;
     }
@@ -200,6 +213,91 @@ fn bakim(hwnd: HWND) {
     bakim_planla(hwnd);
 }
 
+/// "Ayarlar" alt menüsünü model (`menu::ayar_maddeleri`) üzerinden kurar ve `menu`ye ekler.
+unsafe fn ayar_alt_menusu(menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU) {
+    let alt = CreatePopupMenu();
+    let maddeler = menu::ayar_maddeleri(&ayar::guncel(), kurulum::baslangic_var_mi());
+    for m in &maddeler {
+        match m.tur {
+            Tur::Ayirici => AppendMenuW(alt, MF_SEPARATOR, 0, null()),
+            Tur::Onay(isaretli) => {
+                let bayrak = if isaretli {
+                    MF_STRING | MF_CHECKED
+                } else {
+                    MF_STRING
+                };
+                AppendMenuW(alt, bayrak, m.kimlik, genis(&m.etiket).as_ptr())
+            }
+            Tur::Radyo { .. } => AppendMenuW(alt, MF_STRING, m.kimlik, genis(&m.etiket).as_ptr()),
+        };
+    }
+    for m in &maddeler {
+        if let Tur::Radyo {
+            isaretli: true,
+            ilk,
+            son,
+        } = m.tur
+        {
+            CheckMenuRadioItem(alt, ilk as u32, son as u32, m.kimlik as u32, MF_BYCOMMAND);
+        }
+    }
+    AppendMenuW(
+        menu,
+        MF_POPUP | MF_STRING,
+        alt as usize,
+        genis("Ayarlar").as_ptr(),
+    );
+}
+
+/// Ayar değişikliklerini uygular; dosyada tutulan bir ayar değiştiyse genel kısayol kaydı ve
+/// ipucu tazelenir. Yalnız ileti döngüsü iş parçacığında çağrılır.
+fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) {
+    if ayarlar::uygula(degerler) {
+        kisayol_tazele(hwnd);
+        simge_koy(hwnd);
+    }
+}
+
+/// Genel kısayolu geçerli ayara göre kaydeder (aynıysa dokunmaz, farklıysa eskisini siler).
+fn kisayol_tazele(hwnd: HWND) {
+    let ayar = ayar::guncel();
+    tus::ayarla(
+        hwnd,
+        tus::KIMLIK_GOSTER_GIZLE,
+        kisayol::ayardan(&ayar.kisayol_goster_gizle),
+    );
+}
+
+/// Oturumda gizli başlatma: Logseq kapalıysa başlatır, ana penceresi görünene kadar (en çok
+/// `OTURUM_TAVAN_MS`) yoklar.
+fn oturum_baslat(hwnd: HWND) {
+    gunluk::yaz("oturum acilisi: Logseq gizli baslatilacak");
+    OTURUM_BASLANGIC_MS.store(unsafe { GetTickCount64() }, Ordering::Relaxed);
+    if !pencere::logseq_acik_mi() {
+        pencere::baslat();
+    }
+    unsafe { SetTimer(hwnd, ZAMANLAYICI_OTURUM, davranis::OTURUM_YOKLAMA_MS, None) };
+}
+
+fn oturum_yokla(hwnd: HWND) {
+    let gecen =
+        unsafe { GetTickCount64() }.saturating_sub(OTURUM_BASLANGIC_MS.load(Ordering::Relaxed));
+    match davranis::oturum_adimi(pencere::gorunur_ana_sayisi(), gecen) {
+        davranis::OturumAdimi::Bekle => {}
+        davranis::OturumAdimi::Gizle => {
+            unsafe { KillTimer(hwnd, ZAMANLAYICI_OTURUM) };
+            pencere::gizle_hepsi();
+            gunluk::yaz(&format!(
+                "oturum acilisi: Logseq tepsiye gizlendi ({gecen} ms)"
+            ));
+        }
+        davranis::OturumAdimi::Vazgec => {
+            unsafe { KillTimer(hwnd, ZAMANLAYICI_OTURUM) };
+            gunluk::yaz("oturum acilisi: Logseq penceresi beklenen surede gorunmedi, vazgecildi");
+        }
+    }
+}
+
 fn menu_ac(hwnd: HWND) {
     unsafe {
         let gizli = pencere::gizli_sayisi();
@@ -219,6 +317,7 @@ fn menu_ac(hwnd: HWND) {
                 }
             }
         }
+        ayar_alt_menusu(menu);
         let mut nokta = POINT { x: 0, y: 0 };
         GetCursorPos(&mut nokta);
         SetForegroundWindow(hwnd);
@@ -234,6 +333,10 @@ fn menu_ac(hwnd: HWND) {
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
         let Some(eylem) = mantik::menu_eylemi(secim as usize) else {
+            let baslangicta = kurulum::baslangic_var_mi();
+            if let Some(d) = menu::secim_degeri(secim as usize, &ayar::guncel(), baslangicta) {
+                ayar_uygula(hwnd, &[d]);
+            }
             return;
         };
         pencere::menu_uygula(eylem);
@@ -255,7 +358,7 @@ fn sol_tik(hwnd: HWND) {
     if mantik::cift_tik_mi(simdi, onceki, esik) {
         return;
     }
-    pencere::tikla();
+    pencere::tikla_ayarli(ayar::guncel().kapaliyken_tik_acar);
     durum_tazele(hwnd);
 }
 
@@ -292,7 +395,7 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
     }
     match ileti {
         WM_TEPSI => {
-            match mantik::tepsi_olayi(l) {
+            match davranis::tepsi_eylemi(l, ayar::guncel().tik) {
                 TepsiOlayi::SolTik => sol_tik(hwnd),
                 TepsiOlayi::SagTik => menu_ac(hwnd),
                 TepsiOlayi::Yok => {}
@@ -311,8 +414,22 @@ unsafe extern "system" fn pencere_proc(hwnd: HWND, ileti: u32, w: WPARAM, l: LPA
             pencere::goster_hepsi();
             0
         }
+        WM_UC_AYAR => {
+            for degerler in ayarlar::kuyruktan_al() {
+                ayar_uygula(hwnd, &degerler);
+            }
+            0
+        }
+        WM_HOTKEY => {
+            if w as i32 == tus::KIMLIK_GOSTER_GIZLE {
+                pencere::tikla();
+                durum_tazele(hwnd);
+            }
+            0
+        }
         WM_TIMER => {
             match w {
+                ZAMANLAYICI_OTURUM => oturum_yokla(hwnd),
                 ZAMANLAYICI_BAKIM => bakim(hwnd),
                 ZAMANLAYICI_DURUM => durum_tazele(hwnd),
                 ZAMANLAYICI_KUCULT => {
@@ -380,7 +497,7 @@ fn ikinci_kopya() {
 }
 
 /// Aracın normal çalışması: tek örnek, tepsi simgesi, ileti döngüsü.
-pub fn calistir() {
+pub fn calistir(oturum: bool) {
     unsafe {
         let ad = genis("Local\\logseq-tepsi-tek-ornek");
         let mutex = CreateMutexW(null(), 0, ad.as_ptr());
@@ -446,6 +563,8 @@ pub fn calistir() {
                 "soluk simge uretilemedi ({neden}); normal simge kullanilacak"
             )),
         }
+        ayarlar::yukle();
+        kisayol_tazele(hwnd);
         durum_oku();
         kanca_kur();
         simge_koy(hwnd);
@@ -453,6 +572,9 @@ pub fn calistir() {
         bakim_planla(hwnd);
         pencere::acilis_taramasi();
         uc_sunucu::baslat(hwnd as isize);
+        if davranis::oturum_gizli_mi(oturum, &ayar::guncel()) {
+            oturum_baslat(hwnd);
+        }
         let mut ileti: MSG = std::mem::zeroed();
         while GetMessageW(&mut ileti, null_mut(), 0, 0) > 0 {
             TranslateMessage(&ileti);
@@ -462,6 +584,7 @@ pub fn calistir() {
         if k != 0 {
             UnhookWinEvent(k as HWINEVENTHOOK);
         }
+        tus::hepsini_birak(hwnd);
         simge_sil(hwnd);
         DestroyIcon(simge);
         let soluk_simge = SIMGE_SOLUK.load(Ordering::Relaxed);

@@ -3,6 +3,7 @@ name = "logseq-tepsi-cekirdek"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "logseq-tepsi'nin Win32'den bağımsız saf çekirdeği: karar tabloları, yerel uç ayrıştırıcısı, yol adayları, günlük biçimi."
+description = "logseq-tepsi'nin Win32'den bağımsız saf çekirdeği: karar tabloları, yol adayları, günlük biçimi."
 
 [dependencies]
+toml = "0.9"
