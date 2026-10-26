@@ -1,0 +1,25 @@
+# logseq-tepsi'nin altin-kapi beyanı. Değer: "uygulanir" ya da "uygulanmaz".
+
+repo = "logseq-tepsi"
+
+[boyut]
+arkayuz = "uygulanir"                  # 127.0.0.1:47123 yerel uç (durum/ayar/gizle/göster), Logseq HTTP API istemcisi
+onyuz = "uygulanmaz"                   # masaüstü penceresi yok: Win32 tepsi menüsü; eklenti arayüzü Logseq'in içinde çalışır
+veritabani = "uygulanmaz"              # veritabanı yok; ayar.toml ve günlük dosyası
+makine_zararsizligi = "uygulanir"      # oturumla başlar, genel kısayol kaydeder, Logseq penceresini gizler, configs.edn'e dokunur
+tedarik_guvenligi = "uygulanir"
+bellek_guvenligi = "uygulanir"         # Win32 FFI (windows-sys)
+kimlik_yolu = "uygulanir"              # yerel uca X-Logseq-Tepsi üstbilgisi, Logseq API belirteci
+yayina_hazirlik = "uygulanir"          # GitHub ve Logseq eklenti pazarı
+kaynak_tuketimi = "uygulanir"          # sürekli açık tepsi süreci
+birlikte_calisabilirlik = "uygulanir"  # Logseq eklentisi ↔ araç yerel uç sözleşmesi
+karakter_yazimi = "uygulanir"
+hata_disiplini = "uygulanir"
+test_gercekciligi = "uygulanir"
+veri_dayanikliligi = "uygulanir"       # ayar.toml, configs.edn düzenlemesi
+surum_izi = "uygulanir"
+belge_dogrulugu = "uygulanir"
+
+[mahremiyet]
+denetle = true
+izinli_eposta = ["noreply@anthropic.com"]  # Co-Authored-By: Claude izi; herkese açık noreply adresi

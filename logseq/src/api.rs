@@ -51,12 +51,13 @@ fn yokla_dongusu(
 
 /// Arka plan yoklayıcısını başlatır (`etkin`: Logseq açık mı; kapalıyken bağlanılmaz). İş
 /// parçacığı süreç boyunca yaşar.
-pub fn yoklayici_baslat(etkin: impl Fn() -> bool + Send + 'static) {
+pub fn yoklayici_baslat(etkin: impl Fn() -> bool + Send + 'static) -> std::io::Result<()> {
     static DURDURMA: AtomicBool = AtomicBool::new(false);
     let adres = SocketAddr::V4(ADRES);
-    let _ = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("api-yoklama".into())
-        .spawn(move || yokla_dongusu(adres, YOKLAMA_ARALIGI, etkin, &SON_ACIK, &DURDURMA));
+        .spawn(move || yokla_dongusu(adres, YOKLAMA_ARALIGI, etkin, &SON_ACIK, &DURDURMA))
+        .map(drop)
 }
 
 /// `api_otomatik_baslat` isteğinin sonucu.

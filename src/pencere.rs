@@ -164,6 +164,10 @@ fn yolu_hatirla(hwnd: HWND) {
     }
     if let Some(dosya) = ayar_dosyasi() {
         if let Some(d) = dosya.parent() {
+            #[allow(
+                clippy::let_underscore_must_use,
+                reason = "dizin kurulamazsa hemen ardından gelen yazma hatası günlüğe düşer"
+            )]
             let _ = std::fs::create_dir_all(d);
         }
         match std::fs::write(&dosya, format!("{yol}\r\n")) {
@@ -478,7 +482,10 @@ mod testler {
         tikla_uygula(&[(0x5A5A, gorunur)], true, |t| {
             cagrildi = true;
             assert!(matches!(t, Toplu::Gizle(_)), "görünür pencere gizlenmeli");
-            assert!(GIZLI.try_lock().is_ok(), "küme kilidi uygulama sırasında tutuluyor");
+            assert!(
+                GIZLI.try_lock().is_ok(),
+                "küme kilidi uygulama sırasında tutuluyor"
+            );
         });
         assert!(cagrildi);
     }

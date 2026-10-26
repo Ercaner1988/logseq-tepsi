@@ -443,6 +443,10 @@ pub fn kaydet(dizin: &Path, ayarlar: &Ayarlar) -> std::io::Result<()> {
     };
     let sonuc = yaz();
     if sonuc.is_err() {
+        #[allow(
+            clippy::let_underscore_must_use,
+            reason = "yarım geçici dosyanın temizliği; asıl yazma hatası çağırana döner"
+        )]
         let _ = std::fs::remove_file(&gecici);
     }
     sonuc

@@ -227,6 +227,10 @@ fn govde_oku(
     Ok(govde)
 }
 
+#[allow(
+    clippy::let_underscore_must_use,
+    reason = "yanıt sonrası en iyi çaba: istemci bağlantıyı kapatmışsa bildirilecek kimse yok, sunucu döngüsü sürmeli"
+)]
 fn yanit_ver(mut akim: TcpStream, y: &Yanit) {
     let _ = akim.set_write_timeout(Some(Duration::from_millis(uc::OKUMA_ZAMAN_ASIMI_MS)));
     let _ = akim.write_all(&uc::yanit_baytlari(y));

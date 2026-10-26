@@ -1,0 +1,48 @@
+# Sürüm etiketi (v*) itilince: Logseq eklenti paketi (pazarın indirdiği zip) ve Windows aracı.
+name: Yayın
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  yayin:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - name: Sürüm etiketle uyumlu mu
+        shell: bash
+        run: |
+          s=${GITHUB_REF_NAME#v}
+          grep -q "\"version\": \"$s\"" eklenti/package.json || { echo "eklenti/package.json sürümü $s değil"; exit 1; }
+          grep -q "^version = \"$s\"" Cargo.toml || { echo "Cargo.toml sürümü $s değil"; exit 1; }
+      - name: Eklenti
+        shell: bash
+        working-directory: eklenti
+        run: |
+          bun install --frozen-lockfile
+          bun test
+          bun run build
+          mkdir -p ../paket/logseq-tepsi
+          cp package.json icon.svg README.md LICENSE ../paket/logseq-tepsi/
+          cp -r dist ../paket/logseq-tepsi/
+      - name: Araç
+        shell: bash
+        run: |
+          cargo test --workspace --locked
+          cargo build --release --locked
+          cp target/release/logseq-tepsi.exe paket/
+      - name: Sürüm
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd paket
+          7z a "logseq-tepsi-${GITHUB_REF_NAME}.zip" logseq-tepsi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
+            "logseq-tepsi-${GITHUB_REF_NAME}.zip" logseq-tepsi.exe

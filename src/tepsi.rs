@@ -672,7 +672,9 @@ pub fn calistir(oturum: bool) {
         ayarlar::yukle();
         kisayol_tazele(hwnd);
         durum_oku();
-        api::yoklayici_baslat(logseq_acik_biliniyor);
+        if let Err(e) = api::yoklayici_baslat(logseq_acik_biliniyor) {
+            gunluk::yaz(&format!("API yoklayıcısı başlatılamadı: {e}"));
+        }
         kanca_kur();
         simge_koy(hwnd);
         SetTimer(hwnd, ZAMANLAYICI_DURUM, mantik::DURUM_YOKLAMA_MS, None);

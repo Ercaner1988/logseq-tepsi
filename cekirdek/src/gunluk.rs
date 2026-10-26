@@ -48,6 +48,10 @@ pub fn satir(sn: u64, ileti: &str) -> String {
     format!("{} {tek}\n", zaman_bicimle(sn))
 }
 
+#[allow(
+    clippy::let_underscore_must_use,
+    reason = "günlük yazıcısının kendi hatasını bildirebileceği yer yok (pencereli süreç, konsol yok); günlük yazılamazsa araç çalışmayı sürdürür"
+)]
 pub fn yaz(ileti: &str) {
     let Some(d) = dizin() else { return };
     let _ = std::fs::create_dir_all(&d);
