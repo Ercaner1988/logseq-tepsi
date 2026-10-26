@@ -2,6 +2,10 @@
 
 Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alanı) gizleyen küçük Windows aracı. Logseq'in kendisinde tepsi özelliği yok; araç pencere işlemleri yapar ve eklentinin konuşabileceği yalnız-yerel bir uç açar. Dış ağ erişimi yok. Logseq'e dokunduğu yerler: `Logseq.exe`yi başlatmak (anında not ve API başlat/durdur için `logseq://` adresiyle), Logseq'in `127.0.0.1:12315` API portuna salt bağlantı yoklaması (istek göndermez; Logseq açıkken arka planda 2 sn'de bir), süreç listesinde bilinen Logseq yolunda `Logseq.exe` adlı sürecin varlığı ve Logseq kapalıyken `%APPDATA%\Logseq\configs.edn`de yalnız `:server/autostart` anahtarı.
 
+**Bağlantılar:** [Sürümler (eklenti zip + `logseq-tepsi.exe`)](https://github.com/Ercaner1988/logseq-tepsi/releases) · [Eklenti](eklenti/README.md) · [Sorun bildir](https://github.com/Ercaner1988/logseq-tepsi/issues)
+
+> **English.** Hides the Logseq desktop window to the Windows notification area (system tray) when minimized, with a global show/hide hotkey (`Ctrl+Alt+L`), a quick-note hotkey (`Ctrl+Alt+N`), a tray menu and a settings submenu. Two parts: the Windows tray tool (`logseq-tepsi.exe`, Rust, no network access, listens only on `127.0.0.1:47123`) and the Logseq plugin "Tepsi" that talks to it (hide button, commands, settings, reopen last page). Windows only. Install: download `logseq-tepsi.exe` from Releases, run `logseq-tepsi kur` once (adds a Startup shortcut and a URL scheme), then install the plugin from the Logseq marketplace. The documentation is in Turkish.
+
 ## Ne yapar
 
 - Tepsiye tek simge koyar (Logseq'in kendi simgesi, ipucu "Logseq"). Logseq kapalıyken simge soluk (gri, yarı saydam) görünür ve ipucu "Logseq kapalı, tıklayınca açılır" der (tıklamak Logseq'i açar; ipucu `tik` ve `kapaliyken_tik_acar` ayarına göre değişir, kısayol kaydedilemediyse "kısayol kaydedilemedi" uyarısı ekler; iki kısayol aynı tuşa ayarlıysa "kısayollar çakışıyor" der); durum 2 sn'de bir yoklanır, yalnız değişince simge tazelenir. Simge eklenemezse ya da küçültme kancası kurulamazsa günlüğe yazar, artan gecikmeyle (1 sn ... 30 sn) yeniden dener; kanca yokken ipucu "küçültme izlenemiyor" der.
@@ -62,6 +66,8 @@ Dosya eksikse varsayılanlarla çalışılır (günlüğe yazılır). Dosyanın 
 Güvenlik: OPTIONS dışındaki her istek `X-Logseq-Tepsi: 1` taşımalı, yoksa 403. `Origin` varsa izin listesinde olmalı (yalnız `lsp://logseq.io`, `lsp://logseq.com`; `cekirdek/src/uc.rs` `IZINLI_ORIGINLER`; `null` ve `file://` bilerek yok: sandbox iframe ve yerel HTML dosyaları da onu gönderir). Origin göndermeyen yerel süreç (curl gibi) özel başlıkla geçer, değilse 403. `Host` varsa `127.0.0.1:47123` ya da `localhost:47123` olmalı (DNS yeniden bağlama savunması; sözleşmeye ek). İzinli yanıtlarda `Access-Control-Allow-Origin` yankılanır. Bilinmeyen yol 404, yanlış metot 405, bozuk istek 400, büyük istek 431, zaman aşımı 408. Pencere ve ayar işleri HTTP iş parçacığında yapılmaz: gizle/göster ileti penceresine `PostMessageW` ile, ayar değerleri bir kuyruk ve `SendMessageTimeoutW` ile (sonuç beklenir, zaman aşımında iptal) devredilir. `/ayar` için de aynı güvenlik denetimleri geçerlidir; yetkisiz isteğin gövdesi okunmaz.
 
 ## Kurulum
+
+Hazır ikili: [Sürümler](https://github.com/Ercaner1988/logseq-tepsi/releases) sayfasından `logseq-tepsi.exe`yi indirip kalıcı bir klasöre koyun, bir kez `logseq-tepsi kur` çalıştırın. Eklenti Logseq eklenti pazarından ("Tepsi") ya da aynı sayfadaki zip'ten kurulur ([eklenti README](eklenti/README.md)). Kaynaktan:
 
 ```
 cargo install --path .

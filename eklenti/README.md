@@ -2,6 +2,8 @@
 
 Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen [logseq-tepsi](../README.md) aracını Logseq'in içinden yönetir. Eklenti pencereyi kendisi gizleyemez (eklentiler bir iframe içinde çalışır); aracın yerel ucuna (`127.0.0.1`) istek atar.
 
+> **English.** Controls the [logseq-tepsi](https://github.com/Ercaner1988/logseq-tepsi) Windows tray tool from inside Logseq: a toolbar button and command to hide Logseq to the system tray, tool status, quick note into today's journal or a new page, reopening the last visited page on startup, and the tool's settings mirrored in the plugin settings. Requires the tray tool (`logseq-tepsi.exe`, Windows) from the repository's Releases; without it the plugin loads and only shows a warning. Documentation is in Turkish.
+
 ## Ne yapar
 
 - **Araç çubuğu düğmesi**: tıklayınca Logseq'i tepsiye gizler.
@@ -21,6 +23,10 @@ Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen [logseq-tepsi](.
 `logseq-tepsi` aracı çalışıyor olmalı. Eklenti araç olmadan da yüklenir, yalnızca uyarı verir. Aracı bir kez `logseq-tepsi kur` ile kaydederseniz `Tepsi: aracı başlat` komutu çalışır (araç `logseq-tepsi://baslat` adresini kaydeder).
 
 ## Kurulum
+
+### Pazardan
+
+Logseq'te Eklentiler, Pazar, "Tepsi" araması, Kur. Pazar sürümü [Sürümler](https://github.com/Ercaner1988/logseq-tepsi/releases) sayfasındaki `logseq-tepsi-v*.zip`'tir; aynı zip elle de kurulabilir (açıp `logseq-tepsi` klasörünü `~/.logseq/plugins/` altına koyun).
 
 ### Betikle (geliştirici kipi gerekmez)
 

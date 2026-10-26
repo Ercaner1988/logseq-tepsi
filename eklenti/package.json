@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen logseq-tepsi aracını Logseq içinden yönetir.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ercaner1988/logseq-tepsi"
+  },
   "author": "Ercan Er",
   "type": "module",
   "main": "dist/index.html",
