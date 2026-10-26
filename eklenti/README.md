@@ -4,7 +4,7 @@ Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen [logseq-tepsi](.
 
 > **English.** Controls the [logseq-tepsi](https://github.com/Ercaner1988/logseq-tepsi) Windows tray tool from inside Logseq: a toolbar button and command to hide Logseq to the system tray, tool status, quick note into today's journal or a new page, reopening the last visited page on startup, and the tool's settings mirrored in the plugin settings. Requires the tray tool (`logseq-tepsi.exe`, Windows) from the repository's Releases; without it the plugin loads and only shows a warning. Documentation is in Turkish.
 
-![Tepsi menüsü ve Ayarlar alt menüsü](/tepsi-menusu.png)
+![Tepsi menüsü ve Ayarlar alt menüsü](https://raw.githubusercontent.com/Ercaner1988/logseq-tepsi/main/docs/gorsel/tepsi-menusu.png)
 
 ## Ne yapar
 
