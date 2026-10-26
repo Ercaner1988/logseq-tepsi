@@ -6,6 +6,10 @@ Logseq masaüstü uygulamasını küçültünce sistem tepsisine (bildirim alan�
 
 > **English.** Hides the Logseq desktop window to the Windows notification area (system tray) when minimized, with a global show/hide hotkey (`Ctrl+Alt+L`), a quick-note hotkey (`Ctrl+Alt+N`), a tray menu and a settings submenu. Two parts: the Windows tray tool (`logseq-tepsi.exe`, Rust, no network access, listens only on `127.0.0.1:47123`) and the Logseq plugin "Tepsi" that talks to it (hide button, commands, settings, reopen last page). Windows only. Install: download `logseq-tepsi.exe` from Releases, run `logseq-tepsi kur` once (adds a Startup shortcut and a URL scheme), then install the plugin from the Logseq marketplace. The documentation is in Turkish.
 
+![Tepsi menüsü ve Ayarlar alt menüsü](docs/gorsel/tepsi-menusu.png)
+
+![Logseq kapalıyken soluk tepsi simgesi](docs/gorsel/tepsi-kapali.png) ![Araç çubuğundaki Tepsi düğmesi](docs/gorsel/logseq-arac-cubugu.png)
+
 ## Ne yapar
 
 - Tepsiye tek simge koyar (Logseq'in kendi simgesi, ipucu "Logseq"). Logseq kapalıyken simge soluk (gri, yarı saydam) görünür ve ipucu "Logseq kapalı, tıklayınca açılır" der (tıklamak Logseq'i açar; ipucu `tik` ve `kapaliyken_tik_acar` ayarına göre değişir, kısayol kaydedilemediyse "kısayol kaydedilemedi" uyarısı ekler; iki kısayol aynı tuşa ayarlıysa "kısayollar çakışıyor" der); durum 2 sn'de bir yoklanır, yalnız değişince simge tazelenir. Simge eklenemezse ya da küçültme kancası kurulamazsa günlüğe yazar, artan gecikmeyle (1 sn ... 30 sn) yeniden dener; kanca yokken ipucu "küçültme izlenemiyor" der.
