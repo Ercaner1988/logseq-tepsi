@@ -2,7 +2,7 @@
 // Pencereyi gizleme işini eklenti yapamaz (iframe içinde çalışır); yerel uçtan araca söyler.
 import "@logseq/libs";
 import { portCoz } from "./ag";
-import { ayarSemasi } from "./ayar";
+import { tamSema, VARSAYILAN_KISAYOL } from "./ayar";
 import {
   acilisKontrolu,
   ayarDegisti,
@@ -15,42 +15,13 @@ import {
 } from "./eylemler";
 import { kalinanaDon, rotaDegisti, yeniDurum, type DepoKatmani, type KalinanOrtami } from "./kalinan";
 import { anindaNotEylemi, type DefterApi, type NotOrtami, type SayfaKimligi } from "./not";
-import { API_BASLAT_ETIKETI, API_DURDUR_ETIKETI } from "./mesajlar";
+import { dilKarar, dilKur, etkinDil, m, type Dil } from "./metin";
 import { apiSunucusuEylemi } from "./sunucu";
 
-const VARSAYILAN_KISAYOL = "mod+shift+x";
 const ARAC_CUBUGU_ANAHTARI = "logseq-tepsi-toolbar";
 
 /** Aracın son bilinen ayarları (eşitleme ve başarılı gönderimle güncellenir). */
 const depo: AyarDeposu = { bilinen: null };
-
-const AYAR_SEMASI = [
-  {
-    key: "port",
-    type: "number",
-    default: 47123,
-    title: "Araç portu",
-    description: "logseq-tepsi aracının yerel uç portu. Aracı varsayılan portla çalıştırıyorsanız değiştirmeyin.",
-  },
-  {
-    key: "acilisUyarisi",
-    type: "boolean",
-    default: true,
-    title: "Açılışta araç yoksa uyar",
-    description: "Logseq açılırken tepsi aracı çalışmıyorsa bir kez uyarı gösterir. Rahatsız ediyorsa kapatın.",
-  },
-  {
-    key: "kisayol",
-    type: "string",
-    default: VARSAYILAN_KISAYOL,
-    title: "Tepsiye gizle kısayolu",
-    description:
-      "Logseq içi kısayol. Örnek: mod+shift+x (mod, Windows'ta Ctrl tuşudur). Boş bırakırsanız kısayol atanmaz. " +
-      "Değişiklik, eklenti yeniden yüklenince ya da Logseq yeniden açılınca geçerli olur.",
-  },
-  // Aşağıdakiler tepsi aracının ayarlarıdır: açılışta araçtan okunur, değişince araca yazılır.
-  ...ayarSemasi(),
-];
 
 const SIMGE_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" ' +
@@ -164,9 +135,91 @@ function kisayolAyari(): string {
   return ham.trim();
 }
 
-async function main(): Promise<void> {
-  logseq.useSettingsSchema(AYAR_SEMASI as never);
+/** Komut paleti kayıtlarının silicileri: dil değişince silinip yeni etiketlerle yeniden kaydedilir. */
+let komutSilicileri: Array<() => void> = [];
 
+/**
+ * Dile bağlı arayüz kayıtları: ayar şeması, araç çubuğu düğmesi ve komut paleti etiketleri.
+ * Şema `settings:schema` (Logseq `setSchema`), araç çubuğu öğesi anahtarına göre değiştirilir; komutlar
+ * `registerCommandPalette` dönüşündeki siliciyle silinip yeniden kaydedilir (Logseq
+ * `unregister_plugin_simple_command` anahtara göre siler; silmeden kaydetmek yineler).
+ */
+function arayuzuKaydet(): void {
+  const mt = m();
+  logseq.useSettingsSchema(tamSema(etkinDil()) as never);
+
+  logseq.App.registerUIItem("toolbar", {
+    key: ARAC_CUBUGU_ANAHTARI,
+    template:
+      `<a class="button" data-on-click="tepsiGizle" title="${mt.gizleIpucu}">${SIMGE_SVG}</a>`,
+  });
+
+  for (const sil of komutSilicileri) sil();
+  komutSilicileri = [];
+  const kaydet = (
+    opts: Parameters<typeof logseq.App.registerCommandPalette>[0],
+    eylem: () => void,
+  ): void => {
+    const sil = logseq.App.registerCommandPalette(opts, eylem);
+    if (typeof sil === "function") komutSilicileri.push(sil);
+  };
+  const kisayol = kisayolAyari();
+  // Komut KİMLİKLERİ (key) sabittir; yalnız label dile göre değişir.
+  kaydet(
+    {
+      key: "tepsi-gizle",
+      label: mt.gizleEtiketi,
+      ...(kisayol ? { keybinding: { binding: kisayol, mode: "global" as const } } : {}),
+    },
+    () => void gizleEylemi(ortam()),
+  );
+  kaydet({ key: "tepsi-durum", label: mt.durumEtiketi }, () => void durumEylemi(ortam()));
+  kaydet({ key: "tepsi-baslat", label: mt.baslatEtiketi }, () => void baslatEylemi(ortam()));
+  kaydet(
+    { key: "tepsi-aninda-not", label: mt.notEtiketi },
+    () => void anindaNotEylemi(notOrtami(), undefined),
+  );
+  kaydet(
+    { key: "tepsi-api-baslat", label: mt.apiBaslatEtiketi },
+    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "baslat"),
+  );
+  kaydet(
+    { key: "tepsi-api-durdur", label: mt.apiDurdurEtiketi },
+    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "durdur"),
+  );
+}
+
+/** Logseq'in arayüz dili (`preferredLanguage`); okunamazsa undefined (karar işlevi İngilizceye düşer). */
+async function logseqDili(): Promise<unknown> {
+  try {
+    return (await logseq.App.getUserConfigs())?.preferredLanguage;
+  } catch {
+    return undefined;
+  }
+}
+
+let uygulananDil: Dil | null = null;
+let dilSirasi: Promise<void> = Promise.resolve();
+
+/** Etkin dili ayardan (gerekirse Logseq dilinden) çözer; değiştiyse bildirim dilini ve kayıtları yeniler. */
+async function dilUygula(): Promise<void> {
+  const ayar = logseq.settings?.dil;
+  const dil = dilKarar(ayar, ayar === "tr" || ayar === "en" ? undefined : await logseqDili());
+  if (dil === uygulananDil) return;
+  uygulananDil = dil;
+  dilKur(dil); // bildirimler bu andan itibaren yeni dilde
+  document.documentElement.lang = dil;
+  arayuzuKaydet();
+}
+
+/** Ardışık ayar olayları sırayla işlenir (yarış olmasın). */
+function dilUygulaSirayla(): Promise<void> {
+  dilSirasi = dilSirasi.then(dilUygula).catch(console.error);
+  return dilSirasi;
+}
+
+async function main(): Promise<void> {
+  // Model KİMLİKLERİ sabittir (araç adresi ...models.anindaNot / apiSunucusu kullanır).
   logseq.provideModel({
     tepsiGizle() {
       void gizleEylemi(ortam());
@@ -181,47 +234,16 @@ async function main(): Promise<void> {
     },
   });
 
-  logseq.App.registerUIItem("toolbar", {
-    key: ARAC_CUBUGU_ANAHTARI,
-    template:
-      `<a class="button" data-on-click="tepsiGizle" title="Logseq'i tepsiye gizle">${SIMGE_SVG}</a>`,
-  });
-
-  const kisayol = kisayolAyari();
-  logseq.App.registerCommandPalette(
-    {
-      key: "tepsi-gizle",
-      label: "Tepsi: Logseq'i tepsiye gizle",
-      ...(kisayol ? { keybinding: { binding: kisayol, mode: "global" as const } } : {}),
-    },
-    () => void gizleEylemi(ortam()),
-  );
-  logseq.App.registerCommandPalette(
-    { key: "tepsi-durum", label: "Tepsi: durum" },
-    () => void durumEylemi(ortam()),
-  );
-  logseq.App.registerCommandPalette(
-    { key: "tepsi-baslat", label: "Tepsi: aracı başlat" },
-    () => void baslatEylemi(ortam()),
-  );
-  logseq.App.registerCommandPalette(
-    { key: "tepsi-aninda-not", label: "Tepsi: anında not" },
-    () => void anindaNotEylemi(notOrtami(), undefined),
-  );
-  logseq.App.registerCommandPalette(
-    { key: "tepsi-api-baslat", label: API_BASLAT_ETIKETI },
-    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "baslat"),
-  );
-  logseq.App.registerCommandPalette(
-    { key: "tepsi-api-durdur", label: API_DURDUR_ETIKETI },
-    () => void apiSunucusuEylemi({ ...ortam(), apiEylemi: apiEylemi() }, "durdur"),
-  );
+  await dilUygulaSirayla(); // şema, araç çubuğu ve komutlar (dil çözülür)
 
   // Kalınan sayfa: her sayfa rotası saklanır; kullanıcı gezindiyse açılış dönüşü yapılmaz.
   logseq.App.onRouteChanged((r) => void rotaDegisti(KALINAN_ORTAMI, kalinanDurum, r));
 
   // Araç ayarlarının değişimi araca iletilir; araçtan gelen eşitleme geri POST etmez (bilinen).
-  logseq.onSettingsChanged((yeni, eski) => void ayarDegisti(ortam(), depo, yeni, eski));
+  logseq.onSettingsChanged((yeni, eski) => {
+    void ayarDegisti(ortam(), depo, yeni, eski);
+    if (yeni?.dil !== eski?.dil) void dilUygulaSirayla();
+  });
 
   await acilisKontrolu(ortam(), logseq.settings?.acilisUyarisi !== false);
   await ayarEsitle(ortam(), depo);

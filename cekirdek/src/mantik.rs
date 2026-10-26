@@ -2,6 +2,7 @@
 //! tepsi iletisi çözümü.
 
 use crate::gizlenen::Gizlenenler;
+use logseq_tepsi_metin::Metin;
 
 pub const SUREC_ADI: &str = "Logseq.exe";
 const SINIF_ADI: &str = "Chrome_WidgetWin_1";
@@ -226,27 +227,8 @@ pub fn bakim_gerekli(simge_tamam: bool, kanca_tamam: bool, kisayol_hatali: bool)
     !simge_tamam || !kanca_tamam || kisayol_hatali
 }
 
-/// Tepsi ipucu: küçültme izlenemiyorsa kullanıcı görsün.
-pub fn ipucu(kanca_tamam: bool) -> &'static str {
-    if kanca_tamam {
-        "Logseq"
-    } else {
-        "Logseq (küçültme izlenemiyor)"
-    }
-}
-
 /// Logseq'in açık/kapalı durumunu bu aralıkla (ms) yoklayan zamanlayıcı.
 pub const DURUM_YOKLAMA_MS: u32 = 2_000;
-
-/// Tepsi ipucu, Logseq durumuna göre: kapalıyken tıklamanın Logseq'i açtığını söyler;
-/// küçültme izlenemiyorsa (kanca yok) her iki durumda da uyarır.
-pub fn tepsi_ipucu(logseq_acik: bool, kanca_tamam: bool) -> &'static str {
-    match (logseq_acik, kanca_tamam) {
-        (true, _) => ipucu(kanca_tamam),
-        (false, true) => "Logseq kapalı, tıklayınca açılır",
-        (false, false) => "Logseq kapalı, tıklayınca açılır (küçültme izlenemiyor)",
-    }
-}
 
 /// Yoklanan durum öncekinden farklıysa (ya da henüz hiç yazılmadıysa) simge tazelenir.
 pub fn durum_degisti_mi(onceki: Option<bool>, simdi: bool) -> bool {
@@ -328,13 +310,13 @@ pub fn menu_eylemi(kimlik: usize) -> Option<MenuEylemi> {
 }
 
 /// Menü öğeleri sırasıyla: (kimlik, etiket). Ayırıcı `None` ile işaretlenir.
-pub const MENU: [Option<(usize, &str)>; 7] = [
-    Some((KIMLIK_GOSTER, "Göster")),
-    Some((KIMLIK_HEPSINI_GOSTER, "Hepsini göster")),
-    Some((KIMLIK_GIZLE, "Tepsiye gizle")),
+pub const MENU: [Option<(usize, Metin)>; 7] = [
+    Some((KIMLIK_GOSTER, Metin::MenuGoster)),
+    Some((KIMLIK_HEPSINI_GOSTER, Metin::MenuHepsiniGoster)),
+    Some((KIMLIK_GIZLE, Metin::MenuTepsiyeGizle)),
     None,
-    Some((KIMLIK_CIKIS, "Çıkış")),
-    Some((KIMLIK_ARACI_KAPAT, "Tepsi aracını kapat")),
+    Some((KIMLIK_CIKIS, Metin::MenuCikis)),
+    Some((KIMLIK_ARACI_KAPAT, Metin::MenuAraciKapat)),
     None,
 ];
 
@@ -641,28 +623,6 @@ mod toplu_testler {
             vec![1_000, 2_000, 5_000, 10_000, 30_000, 30_000, 30_000, 30_000]
         );
         assert_eq!(yeniden_gecikmesi_ms(u32::MAX), 30_000);
-    }
-
-    #[test]
-    fn ipucu_kanca_sorununu_bildirir() {
-        assert_eq!(ipucu(true), "Logseq");
-        assert!(ipucu(false).contains("izlenemiyor"));
-        assert!(ipucu(false).encode_utf16().count() < 127);
-    }
-
-    #[test]
-    fn tepsi_ipucu_durumu_soyler() {
-        assert_eq!(tepsi_ipucu(true, true), "Logseq");
-        assert_eq!(tepsi_ipucu(true, false), ipucu(false));
-        assert!(tepsi_ipucu(false, true).contains("kapalı"));
-        assert!(tepsi_ipucu(false, true).contains("tıklayınca açılır"));
-        // Kapalıyken de kanca uyarısı kaybolmaz.
-        assert!(tepsi_ipucu(false, false).contains("kapalı"));
-        assert!(tepsi_ipucu(false, false).contains("izlenemiyor"));
-        for (a, k) in [(true, true), (true, false), (false, true), (false, false)] {
-            // szTip en çok 127 UTF-16 birimi + sonlandırıcı.
-            assert!(tepsi_ipucu(a, k).encode_utf16().count() < 127);
-        }
     }
 
     #[test]

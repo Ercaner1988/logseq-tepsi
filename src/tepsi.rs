@@ -5,10 +5,11 @@
 use crate::ayar::AyarDegeri;
 use crate::mantik::{self, KucultmeKarari, MenuEylemi, TepsiOlayi, MENU};
 use crate::menu::{self, Tur};
+use crate::metin::{metin, Dil, Metin};
 use crate::uc::Devir;
 use crate::{
-    api, ayar, ayarlar, davranis, gunluk, kisayol, kurulum, not_gonder, pencere, soluk, sunucu,
-    tus, uc_sunucu,
+    api, ayar, ayarlar, davranis, dil, gunluk, kisayol, kurulum, not_gonder, pencere, soluk,
+    sunucu, tus, uc_sunucu,
 };
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicU8, Ordering};
@@ -108,6 +109,7 @@ fn bildirim(hwnd: HWND) -> NOTIFYICONDATAW {
         soluk_simge
     } as HICON;
     let ipucu = davranis::ipucu_ayarli(
+        dil::etkin_dil(),
         acik,
         KANCA.load(Ordering::Relaxed) != 0,
         &ayar::guncel(),
@@ -295,15 +297,12 @@ fn dis_durum() -> menu::DisDurum {
 unsafe fn ayar_alt_menusu(
     menu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU,
     dis: &menu::DisDurum,
+    dil: Dil,
 ) {
     let alt = CreatePopupMenu();
-    maddeleri_ekle(alt, &menu::ayar_maddeleri_tam(&ayar::guncel(), dis));
-    AppendMenuW(
-        menu,
-        MF_POPUP | MF_STRING,
-        alt as usize,
-        genis("Ayarlar").as_ptr(),
-    );
+    maddeleri_ekle(alt, &menu::ayar_maddeleri_tam(&ayar::guncel(), dis, dil));
+    let baslik = genis(metin(dil, Metin::AyarlarBaslik));
+    AppendMenuW(menu, MF_POPUP | MF_STRING, alt as usize, baslik.as_ptr());
 }
 
 /// Ayar uygulandıktan sonra sırayla yapılan tazeleme adımları.
@@ -331,7 +330,7 @@ fn ayar_sonrasi(degisti: bool, mut adim: impl FnMut(AyarSonrasi)) {
 fn ayar_uygula(hwnd: HWND, degerler: &[AyarDegeri]) -> Devir {
     let (degisti, govde) = match ayarlar::uygula(degerler) {
         Ok(s) => s,
-        Err(neden) => return Devir::Red(neden),
+        Err(neden) => return Devir::Red(neden.yaz(dil::etkin_dil())),
     };
     ayar_sonrasi(degisti, |a| match a {
         AyarSonrasi::KisayolTazele => kisayol_tazele(hwnd),
@@ -394,6 +393,7 @@ fn oturum_yokla(hwnd: HWND) {
 fn menu_ac(hwnd: HWND) {
     unsafe {
         let gizli = pencere::gizli_sayisi();
+        let dil = dil::etkin_dil();
         let menu = CreatePopupMenu();
         for oge in MENU {
             match oge {
@@ -403,7 +403,7 @@ fn menu_ac(hwnd: HWND) {
                     } else {
                         MF_STRING | MF_GRAYED
                     };
-                    AppendMenuW(menu, bayrak, kimlik, genis(etiket).as_ptr());
+                    AppendMenuW(menu, bayrak, kimlik, genis(metin(dil, etiket)).as_ptr());
                 }
                 None => {
                     AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -411,8 +411,8 @@ fn menu_ac(hwnd: HWND) {
             }
         }
         let dis = dis_durum();
-        maddeleri_ekle(menu, &menu::ana_ek_maddeleri(&dis));
-        ayar_alt_menusu(menu, &dis);
+        maddeleri_ekle(menu, &menu::ana_ek_maddeleri(&dis, dil));
+        ayar_alt_menusu(menu, &dis, dil);
         let mut nokta = POINT { x: 0, y: 0 };
         GetCursorPos(&mut nokta);
         SetForegroundWindow(hwnd);

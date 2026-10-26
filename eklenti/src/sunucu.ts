@@ -6,7 +6,7 @@
 // adresiyle bu işlevi çağırır.
 import { durumAl, type Durum, type Secenekler, type Sonuc } from "./ag";
 import type { MesajTuru } from "./eylemler";
-import { API_IZIN_YOK, apiDurumu, apiIstekGonderildi } from "./mesajlar";
+import { apiDurumu, apiIstekGonderildi, apiIzinYok } from "./mesajlar";
 
 export type ApiEylemi = "baslat" | "durdur";
 
@@ -41,13 +41,13 @@ export async function apiSunucusuEylemi(o: ApiOrtami, payload: unknown): Promise
   const eylem = apiEylemiCoz(payload);
   if (!eylem) return "gecersiz";
   if (!o.apiEylemi) {
-    o.mesaj(API_IZIN_YOK, "warning", 10000);
+    o.mesaj(apiIzinYok(), "warning", 10000);
     return "izin-yok";
   }
   try {
     await o.apiEylemi(doActionDizisi(eylem));
   } catch {
-    o.mesaj(API_IZIN_YOK, "warning", 10000);
+    o.mesaj(apiIzinYok(), "warning", 10000);
     return "izin-yok";
   }
   const baslat = eylem === "baslat";

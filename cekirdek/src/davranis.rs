@@ -7,6 +7,7 @@ use crate::mantik::{
     acilis_karari, kucultme_karari, tepsi_olayi, AcilisEylemi, KucultmeKarari, PencereDurumu,
     TepsiOlayi, Toplu,
 };
+use logseq_tepsi_metin::{ipucu, Dil, IpucuDurumu};
 
 /// Çift tık (`NIM_SETVERSION` yok, sürüm 0 geri çağrısı: doğrudan fare iletisi).
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
@@ -56,38 +57,21 @@ pub fn tik_toplu_ayarli(toplu: Toplu, kapaliyken_tik_acar: bool) -> Option<Toplu
 /// Tepsi ipucu: Logseq durumu, tık ayarı, izlenemeyen küçültme ve kaydedilemeyen kısayol.
 /// (Windows ipucu sınırı 127 UTF-16 birimi; sınamalı.)
 pub fn ipucu_ayarli(
+    dil: Dil,
     logseq_acik: bool,
     kanca_tamam: bool,
     ayar: &Ayarlar,
     kisayol_hatali: bool,
 ) -> String {
-    let mut s = if logseq_acik {
-        "Logseq".to_owned()
-    } else if !ayar.kapaliyken_tik_acar {
-        "Logseq kapalı".to_owned()
-    } else {
-        let tik = match ayar.tik {
-            Tik::Tek => "tıklayınca",
-            Tik::Cift => "çift tıklayınca",
-        };
-        format!("Logseq kapalı, {tik} açılır")
+    let durum = IpucuDurumu {
+        logseq_acik,
+        kapaliyken_tik_acar: ayar.kapaliyken_tik_acar,
+        cift_tik: ayar.tik == Tik::Cift,
+        kanca_tamam,
+        kisayol_hatali,
+        kisayollar_cakisiyor: ayar.kisayollar_cakisiyor(),
     };
-    let mut uyarilar = Vec::new();
-    if !kanca_tamam {
-        uyarilar.push("küçültme izlenemiyor");
-    }
-    if kisayol_hatali {
-        // İki kısayol aynı tuşa ayarlıysa ikincisi kaydedilemez: tanı "başka program" değil, çakışma.
-        uyarilar.push(if ayar.kisayollar_cakisiyor() {
-            "kısayollar çakışıyor"
-        } else {
-            "kısayol kaydedilemedi"
-        });
-    }
-    if !uyarilar.is_empty() {
-        s.push_str(&format!(" ({})", uyarilar.join(", ")));
-    }
-    s
+    ipucu(dil, &durum)
 }
 
 /// Oturum açılışında gizli başlatma yalnız hem ayar açıksa hem araç başlangıç kısayolundan
@@ -125,7 +109,7 @@ pub fn oturum_adimi(gorunur_ana_sayisi: usize, gecen_ms: u64) -> OturumAdimi {
 #[cfg(test)]
 mod testler {
     use super::*;
-    use crate::mantik::{tepsi_ipucu, WM_LBUTTONUP, WM_RBUTTONUP};
+    use crate::mantik::{WM_LBUTTONUP, WM_RBUTTONUP};
 
     const GIZLI: PencereDurumu = PencereDurumu {
         gorunur: false,
@@ -235,13 +219,38 @@ mod testler {
     #[test]
     fn ipucu_varsayilanda_eski_metinle_ayni() {
         let a = Ayarlar::default();
-        for (acik, kanca) in [(true, true), (true, false), (false, true), (false, false)] {
+        for (acik, kanca, metin) in [
+            (true, true, "Logseq"),
+            (true, false, "Logseq (küçültme izlenemiyor)"),
+            (false, true, "Logseq kapalı, tıklayınca açılır"),
+            (
+                false,
+                false,
+                "Logseq kapalı, tıklayınca açılır (küçültme izlenemiyor)",
+            ),
+        ] {
             assert_eq!(
-                ipucu_ayarli(acik, kanca, &a, false),
-                tepsi_ipucu(acik, kanca),
+                ipucu_ayarli(Dil::Tr, acik, kanca, &a, false),
+                metin,
                 "acik={acik} kanca={kanca}"
             );
         }
+    }
+
+    #[test]
+    fn ipucu_ingilizce_ayara_gore() {
+        let a = Ayarlar {
+            tik: Tik::Cift,
+            ..Ayarlar::default()
+        };
+        assert_eq!(
+            ipucu_ayarli(Dil::En, false, true, &a, false),
+            "Logseq closed, double-click to open"
+        );
+        assert_eq!(
+            ipucu_ayarli(Dil::En, true, false, &a, true),
+            "Logseq (minimize tracking unavailable, shortcut registration failed)"
+        );
     }
 
     #[test]
@@ -251,18 +260,21 @@ mod testler {
             ..Ayarlar::default()
         };
         assert_eq!(
-            ipucu_ayarli(false, true, &a, false),
+            ipucu_ayarli(Dil::Tr, false, true, &a, false),
             "Logseq kapalı, çift tıklayınca açılır"
         );
         a.kapaliyken_tik_acar = false;
-        assert_eq!(ipucu_ayarli(false, true, &a, false), "Logseq kapalı");
-        assert_eq!(ipucu_ayarli(true, true, &a, false), "Logseq");
         assert_eq!(
-            ipucu_ayarli(true, true, &a, true),
+            ipucu_ayarli(Dil::Tr, false, true, &a, false),
+            "Logseq kapalı"
+        );
+        assert_eq!(ipucu_ayarli(Dil::Tr, true, true, &a, false), "Logseq");
+        assert_eq!(
+            ipucu_ayarli(Dil::Tr, true, true, &a, true),
             "Logseq (kısayol kaydedilemedi)"
         );
         assert_eq!(
-            ipucu_ayarli(false, false, &a, true),
+            ipucu_ayarli(Dil::Tr, false, false, &a, true),
             "Logseq kapalı (küçültme izlenemiyor, kısayol kaydedilemedi)"
         );
         // Kısayollar aynı tuşa ayarlıysa tanı çakışmadır (başka program değil).
@@ -271,11 +283,11 @@ mod testler {
             ..a.clone()
         };
         assert_eq!(
-            ipucu_ayarli(true, true, &cakisan, true),
+            ipucu_ayarli(Dil::Tr, true, true, &cakisan, true),
             "Logseq (kısayollar çakışıyor)"
         );
         assert_eq!(
-            ipucu_ayarli(true, true, &cakisan, false),
+            ipucu_ayarli(Dil::Tr, true, true, &cakisan, false),
             "Logseq",
             "hata yoksa çakışma ipucuna girmez"
         );
@@ -292,7 +304,7 @@ mod testler {
                         kapaliyken_tik_acar: acar,
                         ..Ayarlar::default()
                     };
-                    let s = ipucu_ayarli(acik, kanca, &ay, hata);
+                    let s = ipucu_ayarli(Dil::Tr, acik, kanca, &ay, hata);
                     assert!(s.encode_utf16().count() < 127, "{s}");
                 }
             }

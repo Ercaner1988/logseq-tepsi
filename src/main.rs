@@ -12,10 +12,10 @@ mod uc_sunucu;
 use logseq_tepsi_cekirdek::komut::Komut;
 // Çekirdek modülleri `crate::...` yoluyla da erişilebilir kalsın.
 use logseq_tepsi_cekirdek::{
-    ayar, davranis, gizlenen, gunluk, kisayol, komut, mantik, menu, not, yollar,
+    ayar, davranis, gizlenen, gunluk, kisayol, komut, mantik, menu, metin, not, yollar,
 };
 use logseq_tepsi_logseq::{api, yapilandirma};
-use logseq_tepsi_sistem::{kayit, kurulum, soluk, surec, tus};
+use logseq_tepsi_sistem::{dil, kayit, kurulum, soluk, surec, tus};
 use logseq_tepsi_uc::{sunucu, uc};
 
 fn main() {

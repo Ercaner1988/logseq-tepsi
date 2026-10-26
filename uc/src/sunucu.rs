@@ -6,6 +6,7 @@
 use crate::onbellek::ZamanliOnbellek;
 use crate::uc::{self, Devir, Is, Yanit};
 use logseq_tepsi_cekirdek::gunluk;
+use logseq_tepsi_cekirdek::metin::Dil;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -59,6 +60,8 @@ pub struct Saglayici {
     pub ayar_metni: fn() -> String,
     /// Logseq API sunucusu çalışıyor mu (`/durum` `api=` satırı; önbelleklenir).
     pub api_acik: fn() -> bool,
+    /// Etkin arayüz dili (`POST /ayar` 400 nedeni bu dilde yazılır).
+    pub dil: fn() -> Dil,
 }
 
 /// Başlangıçtan bu yana ms (tekdüze saat; önbellek bunu `simdi_ms` olarak alır).
@@ -266,6 +269,7 @@ fn yanit_hazirla(akim: &mut TcpStream, sag: Saglayici) -> Option<Yanit> {
         &istek,
         &govde,
         sag.surum,
+        (sag.dil)(),
         || durum_onbellekli_ile(sag.durum),
         sag.ayar_metni,
     );
@@ -330,6 +334,7 @@ mod testler {
         durum: || (0, false),
         ayar_metni: || "tik=tek\n".into(),
         api_acik: || false,
+        dil: || Dil::Tr,
     };
 
     /// Yerel soketle gerçek bağlantı döngüsü: ham istek parçalarını (aralarında kısa bekleme)

@@ -6,6 +6,7 @@ pub mod davranis;
 pub mod gizlenen;
 pub mod gunluk;
 pub use logseq_tepsi_kisayol as kisayol;
+pub use logseq_tepsi_metin as metin;
 pub mod komut;
 pub mod mantik;
 pub mod menu;

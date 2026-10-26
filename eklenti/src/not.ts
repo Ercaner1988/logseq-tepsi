@@ -2,7 +2,7 @@
 // bloğu düzenlemeye açar. Logseq'e bağımlılık `DefterApi` ile dışarıdan verilir (sınanabilir).
 // Araç, `logseq://x-callback-url/invokeCommand?action=plugin.logseq-tepsi.models.anindaNot&payload=<hedef>`
 // adresiyle bu işlevi çağırır; Logseq içinden de komut paletinden çağrılır.
-import { NOT_BLOK_YOK, NOT_SAYFA_YOK, notAcilamadi } from "./mesajlar";
+import { notAcilamadi, notBlokYok, notSayfaAdiYok, notSayfaOlusmadi, notSayfaYok } from "./mesajlar";
 import type { MesajTuru } from "./eylemler";
 
 export type NotHedefi = "gunluk" | "yeni_sayfa";
@@ -88,7 +88,7 @@ export type NotSonucu = "tamam" | "hata";
 
 /**
  * Notu açar. `payload`: araçtan gelen hedef (geçersizse eklenti ayarı, o da yoksa günlük).
- * Hata olursa Türkçe ileti gösterir ve "hata" döner; fırlatmaz.
+ * Hata olursa (etkin dilde) ileti gösterir ve "hata" döner; fırlatmaz.
  */
 export async function anindaNotEylemi(
   o: NotOrtami,
@@ -106,15 +106,15 @@ export async function anindaNotEylemi(
     let sayfa: SayfaKimligi | null;
     if (hedef === "gunluk") {
       sayfa = (await d.gunlukSayfa(gunSayisi(simdi))) ?? (await d.gunlukOlustur(gunMetni(simdi)));
-      if (!sayfa) return hata(NOT_SAYFA_YOK);
+      if (!sayfa) return hata(notSayfaYok());
     } else {
       const ad = await benzersizAd(yeniSayfaAdi(simdi), d.sayfaVarMi);
-      if (!ad) return hata("uygun bir sayfa adı bulunamadı");
+      if (!ad) return hata(notSayfaAdiYok());
       sayfa = await d.sayfaOlustur(ad);
-      if (!sayfa) return hata("sayfa oluşturulamadı");
+      if (!sayfa) return hata(notSayfaOlusmadi());
     }
     const uuid = await d.bosBlokEkle(sayfa);
-    if (!uuid) return hata(NOT_BLOK_YOK);
+    if (!uuid) return hata(notBlokYok());
     d.sayfayaGit(sayfa);
     await o.uyku(GIDIS_BEKLEME_MS);
     await d.blokDuzenle(uuid);

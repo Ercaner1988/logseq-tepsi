@@ -4,6 +4,8 @@
 //! `configs.edn` dosyasıdır (`logseq` crate'i; dosyaya YALNIZ Logseq kapalıyken yazılır).
 
 use crate::ayar::{self, AyarDegeri, Ayarlar};
+use crate::dil::dil_coz;
+use crate::metin::{Mesaj, Metin};
 use crate::{api, gunluk, pencere, yapilandirma};
 use logseq_tepsi_sistem::kurulum;
 use logseq_tepsi_uc::devir::Kuyruk;
@@ -82,7 +84,7 @@ pub fn govde() -> String {
 fn api_istegi(yeni: &mut Ayarlar, istenen: bool) -> api::Etki {
     let Some(dosya) = configs_yolu() else {
         gunluk::yaz("api_otomatik_baslat uygulanamadi: APPDATA yok");
-        return api::Etki::Hata("APPDATA bulunamadı".into());
+        return api::Etki::Hata(Mesaj::yeni(Metin::HataAppdataYok));
     };
     let sonuc = api::istegi_uygula(&dosya, istenen, yeni.api_bekleyen, gozlem());
     yeni.api_bekleyen = sonuc.bekleyen;
@@ -131,24 +133,27 @@ fn sakla(yeni: &Ayarlar) {
 /// İki genel kısayolu aynı tuşa getiren değişiklik hiç uygulanmaz (menüden gelen de dahil) ve
 /// NEDENİYLE `Err` döner: sunucu doğrulaması ile uygulama arasında başka bir istek durumu
 /// değiştirmiş olabilir (iki eşzamanlı POST), bu yüzden red 204 değil 400 olur.
-pub fn uygula(degerler: &[AyarDegeri]) -> Result<(bool, String), String> {
+pub fn uygula(degerler: &[AyarDegeri]) -> Result<(bool, String), Mesaj> {
     let eski = ayar::guncel();
     if let Err(neden) = ayar::cakisma_denetle(&eski, degerler) {
         gunluk::yaz(&format!("ayar reddedildi: {neden}"));
         return Err(neden);
     }
     let mut yeni = eski.clone();
-    let mut govde = String::new();
+    let mut etki = None;
     for d in degerler {
         match d {
-            AyarDegeri::BaslangictaCalis(ac) => match kurulum::baslangic_ayarla(*ac) {
-                Ok(s) => gunluk::yaz(&format!("baslangic kisayolu ({ac}): {s}")),
-                Err(e) => gunluk::yaz(&format!("baslangic kisayolu degistirilemedi: {e}")),
-            },
-            AyarDegeri::ApiOtomatikBaslat(b) => govde = api_istegi(&mut yeni, *b).govde(),
+            AyarDegeri::BaslangictaCalis(ac) => {
+                match kurulum::baslangic_ayarla(*ac, dil_coz(yeni.dil)) {
+                    Ok(s) => gunluk::yaz(&format!("baslangic kisayolu ({ac}): {s}")),
+                    Err(e) => gunluk::yaz(&format!("baslangic kisayolu degistirilemedi: {e}")),
+                }
+            }
+            AyarDegeri::ApiOtomatikBaslat(b) => etki = Some(api_istegi(&mut yeni, *b)),
             d => yeni.uygula(d),
         }
     }
+    let govde = etki.map_or_else(String::new, |e| e.govde(dil_coz(yeni.dil)));
     if yeni == eski {
         return Ok((false, govde));
     }
@@ -177,6 +182,7 @@ mod testler {
         let Err(neden) = uygula(&ikinci) else {
             panic!("çakışan değişiklik reddedilmeliydi");
         };
+        let neden = neden.yaz(crate::metin::Dil::Tr);
         assert!(neden.contains("aynı kısayol olamaz"), "{neden}");
         assert_eq!(ayar::guncel(), birinci_uygulandi, "ayar değişmemeli");
     }

@@ -1,0 +1,8 @@
+[package]
+name = "logseq-tepsi-metin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "logseq-tepsi'nin kullanıcıya görünen metinleri: Türkçe ve İngilizce, dil kararı, biçimli iletiler. Saf, bağımlılıksız, Win32'siz."
+
+[dependencies]

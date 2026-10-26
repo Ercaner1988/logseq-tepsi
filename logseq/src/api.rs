@@ -2,6 +2,7 @@
 //! `api_otomatik_baslat` ayarının nasıl uygulanacağı kararı (yazma YALNIZ Logseq kapalıyken).
 
 use crate::yapilandirma::{self, Yazim};
+use logseq_tepsi_metin::{Dil, Mesaj};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -115,20 +116,20 @@ pub enum Etki {
     Yazildi,
     /// Logseq açık: Logseq kapanınca uygulanacak.
     Beklemede,
-    /// Uygulanamadı (sabit neden metni, dosya içeriği taşımaz).
-    Hata(String),
+    /// Uygulanamadı (sabit, çevrilebilir neden; dosya içeriği taşımaz).
+    Hata(Mesaj),
 }
 
 impl Etki {
     /// Yanıt gövdesi satırları: `api_otomatik_baslat=yazildi|beklemede|hata` (+ hatada
-    /// `api_otomatik_neden=...`, tek satır).
-    pub fn govde(&self) -> String {
+    /// `api_otomatik_neden=...`, tek satır, etkin `dil`de).
+    pub fn govde(&self, dil: Dil) -> String {
         match self {
             Etki::Yazildi => "api_otomatik_baslat=yazildi\n".to_owned(),
             Etki::Beklemede => "api_otomatik_baslat=beklemede\n".to_owned(),
             Etki::Hata(n) => format!(
                 "api_otomatik_baslat=hata\napi_otomatik_neden={}\n",
-                n.replace(['\r', '\n'], " ")
+                n.yaz(dil).replace(['\r', '\n'], " ")
             ),
         }
     }
@@ -170,7 +171,7 @@ pub fn uygula(dosya: &Path, k: Karar, onceki_bekleyen: Option<bool>) -> Sonuc {
                 ),
                 Err(h) => (
                     format!("api_otomatik_baslat={b}: uygulanamadi: {h}"),
-                    Etki::Hata(h.to_string()),
+                    Etki::Hata(h.mesaj()),
                 ),
             };
             (None, Some(g), etki)
@@ -204,7 +205,7 @@ fn okuma_hatasi(h: yapilandirma::Hata, istenen: bool, bekleyen: Option<bool>) ->
     Sonuc {
         bekleyen,
         gunluk: Some(format!("api_otomatik_baslat={istenen}: uygulanamadi: {h}")),
-        etki: Etki::Hata(h.to_string()),
+        etki: Etki::Hata(h.mesaj()),
     }
 }
 
@@ -242,6 +243,7 @@ pub fn bekleyeni_uygula(dosya: &Path, bekleyen: Option<bool>, g: Gozlem) -> Opti
 #[cfg(test)]
 mod testler {
     use super::*;
+    use logseq_tepsi_metin::Metin;
     use std::net::TcpListener;
 
     #[test]
@@ -373,7 +375,10 @@ mod testler {
                     let Etki::Hata(neden) = &s.etki else {
                         panic!("hata bekleniyordu ({icerik:?} {istenen} {g:?}): {s:?}");
                     };
-                    assert!(!neden.contains("bulut-masa"), "{neden}");
+                    for dil in [Dil::Tr, Dil::En] {
+                        let yazi = neden.yaz(dil);
+                        assert!(!yazi.contains("bulut-masa"), "{yazi}");
+                    }
                     assert_eq!(s.bekleyen, Some(true), "bekleyen değişmez");
                     let gunluk = s.gunluk.unwrap();
                     assert!(gunluk.contains("uygulanamadi") && !gunluk.contains("bulut-masa"));
@@ -433,11 +438,21 @@ mod testler {
 
     #[test]
     fn etki_govdesi_sabit_biçimde_ve_tek_satir_neden() {
-        assert_eq!(Etki::Yazildi.govde(), "api_otomatik_baslat=yazildi\n");
-        assert_eq!(Etki::Beklemede.govde(), "api_otomatik_baslat=beklemede\n");
+        for dil in [Dil::Tr, Dil::En] {
+            assert_eq!(Etki::Yazildi.govde(dil), "api_otomatik_baslat=yazildi\n");
+            assert_eq!(
+                Etki::Beklemede.govde(dil),
+                "api_otomatik_baslat=beklemede\n"
+            );
+        }
+        let satirli = Mesaj::yeni(Metin::HataConfigsOkunamadi).arg("bir\nneden");
         assert_eq!(
-            Etki::Hata("bir\nneden".into()).govde(),
-            "api_otomatik_baslat=hata\napi_otomatik_neden=bir neden\n"
+            Etki::Hata(satirli.clone()).govde(Dil::Tr),
+            "api_otomatik_baslat=hata\napi_otomatik_neden=configs.edn okunamadı (bir neden)\n"
+        );
+        assert_eq!(
+            Etki::Hata(satirli).govde(Dil::En),
+            "api_otomatik_baslat=hata\napi_otomatik_neden=configs.edn could not be read (bir neden)\n"
         );
     }
 
@@ -462,7 +477,10 @@ mod testler {
         let Etki::Hata(neden) = uygula(&f, Karar::Yaz(false), None).etki else {
             panic!("hata etkisi bekleniyordu");
         };
-        assert!(neden.contains("beklenmeyen yapıda") && !neden.contains("bulut-masa"));
+        let tr = neden.yaz(Dil::Tr);
+        assert!(tr.contains("beklenmeyen yapıda") && !tr.contains("bulut-masa"));
+        let en = neden.yaz(Dil::En);
+        assert!(en.contains("unexpected structure") && !en.contains("bulut-masa"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

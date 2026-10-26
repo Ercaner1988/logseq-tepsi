@@ -3,6 +3,9 @@
 //! Görev Zamanlayıcı kullanılmaz; yalnız kendi eklediği şeyleri siler.
 
 use crate::kayit;
+use logseq_tepsi_cekirdek::ayar::{self, Ayarlar};
+use logseq_tepsi_cekirdek::gunluk;
+use logseq_tepsi_cekirdek::metin::{bicim, metin, Dil, DilTercihi, Mesaj, Metin};
 use logseq_tepsi_cekirdek::yollar::{
     ayni_yol_mu, baslangic_kisayolu, kisayol_karari_argumanli, sema_anahtari, sema_degerleri,
     url_komutu, KisayolKarari, BASLANGIC_ARGUMANI, SEMA,
@@ -75,13 +78,19 @@ fn genis(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Başlangıç kısayolunu `--oturum` argümanıyla yazar (aşağıdaki yazıcı).
-fn kisayol_yaz(lnk: &str, exe: &str) -> Result<(), String> {
-    kisayol_yaz_argumanli(lnk, exe, BASLANGIC_ARGUMANI)
+/// Başlangıç kısayolunu `--oturum` argümanıyla yazar (aşağıdaki yazıcı); `aciklama`: kısayolun
+/// açıklama metni (kullanıcının dilinde).
+fn kisayol_yaz(lnk: &str, exe: &str, aciklama: &str) -> Result<(), String> {
+    kisayol_yaz_argumanli(lnk, exe, BASLANGIC_ARGUMANI, aciklama)
 }
 
 /// Kısayol dosyasını oluşturur: hedef = exe, çalışma dizini = exe dizini, simge = exe.
-fn kisayol_yaz_argumanli(lnk: &str, exe: &str, arguman: &str) -> Result<(), String> {
+fn kisayol_yaz_argumanli(
+    lnk: &str,
+    exe: &str,
+    arguman: &str,
+    aciklama: &str,
+) -> Result<(), String> {
     let dizin = PathBuf::from(exe)
         .parent()
         .map(|p| p.display().to_string())
@@ -90,7 +99,7 @@ fn kisayol_yaz_argumanli(lnk: &str, exe: &str, arguman: &str) -> Result<(), Stri
     unsafe {
         let hr = CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
         if hr < 0 {
-            return Err(format!("CoInitializeEx hata {hr:#x}"));
+            return Err(format!("CoInitializeEx HRESULT {hr:#x}"));
         }
         let sonuc = (|| {
             let mut ham: *mut c_void = null_mut();
@@ -102,16 +111,12 @@ fn kisayol_yaz_argumanli(lnk: &str, exe: &str, arguman: &str) -> Result<(), Stri
                 &mut ham,
             );
             if hr < 0 || ham.is_null() {
-                return Err(format!("CoCreateInstance(ShellLink) hata {hr:#x}"));
+                return Err(format!("CoCreateInstance(ShellLink) HRESULT {hr:#x}"));
             }
             let kisayol = ham as *mut Nesne<ShellLinkVtbl>;
             let v = &*(*kisayol).vtbl;
-            let (exe_g, dizin_g, ac_g, arguman_g) = (
-                genis(exe),
-                genis(&dizin),
-                genis("Logseq'i küçültünce tepsiye gizler"),
-                genis(arguman),
-            );
+            let (exe_g, dizin_g, ac_g, arguman_g) =
+                (genis(exe), genis(&dizin), genis(aciklama), genis(arguman));
             let mut hr = (v.set_path)(ham, exe_g.as_ptr());
             if hr >= 0 {
                 hr = (v.set_arguments)(ham, arguman_g.as_ptr());
@@ -137,7 +142,7 @@ fn kisayol_yaz_argumanli(lnk: &str, exe: &str, arguman: &str) -> Result<(), Stri
             }
             (v.temel.release)(ham);
             if hr < 0 {
-                Err(format!("kısayol yazılamadı, hata {hr:#x}"))
+                Err(format!("IShellLink/IPersistFile::Save HRESULT {hr:#x}"))
             } else {
                 Ok(())
             }
@@ -162,7 +167,7 @@ fn kisayol_oku(lnk: &str) -> Result<(String, String), String> {
     unsafe {
         let hr = CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
         if hr < 0 {
-            return Err(format!("CoInitializeEx hata {hr:#x}"));
+            return Err(format!("CoInitializeEx HRESULT {hr:#x}"));
         }
         let sonuc = (|| {
             let mut ham: *mut c_void = null_mut();
@@ -174,7 +179,7 @@ fn kisayol_oku(lnk: &str) -> Result<(String, String), String> {
                 &mut ham,
             );
             if hr < 0 || ham.is_null() {
-                return Err(format!("CoCreateInstance(ShellLink) hata {hr:#x}"));
+                return Err(format!("CoCreateInstance(ShellLink) HRESULT {hr:#x}"));
             }
             let v = &*(*(ham as *mut Nesne<ShellLinkVtbl>)).vtbl;
             let mut dosya_ham: *mut c_void = null_mut();
@@ -205,7 +210,7 @@ fn kisayol_oku(lnk: &str) -> Result<(String, String), String> {
             }
             (v.temel.release)(ham);
             if hr < 0 {
-                Err(format!("kısayol okunamadı, hata {hr:#x}"))
+                Err(format!("IShellLink/IPersistFile::Load HRESULT {hr:#x}"))
             } else {
                 Ok(yol)
             }
@@ -215,10 +220,15 @@ fn kisayol_oku(lnk: &str) -> Result<(String, String), String> {
     }
 }
 
+/// COM/Win32 katmanının dile bağlı olmayan teknik hatası (HRESULT adı) kullanıcı iletisi olarak.
+fn teknik(s: String) -> Mesaj {
+    Mesaj::yeni(Metin::KurTeknik).arg(s)
+}
+
 /// Başlangıç kısayolunu bu exe'ye göre kurar: yoksa oluşturur; başka exe'yi gösteriyorsa, argümanı
-/// `--oturum` değilse ya da okunamıyorsa yeniden yazar; aynıysa dokunmaz. Yapılanı düz metinle
-/// döndürür.
-fn kisayolu_duzenle(lnk: &str, exe: &str) -> Result<String, String> {
+/// `--oturum` değilse ya da okunamıyorsa yeniden yazar; aynıysa dokunmaz. Yapılanı çevrilebilir
+/// iletiyle döndürür; `aciklama`: kısayolun açıklama metni (kullanıcının dilinde).
+fn kisayolu_duzenle(lnk: &str, exe: &str, aciklama: &str) -> Result<Mesaj, Mesaj> {
     let var = std::path::Path::new(lnk).exists();
     let okunan = if var {
         kisayol_oku(lnk)
@@ -229,23 +239,22 @@ fn kisayolu_duzenle(lnk: &str, exe: &str) -> Result<String, String> {
         Ok((h, a)) => (Some(h.as_str()), Some(a.as_str())),
         Err(_) => (None, None),
     };
+    let yaz = || kisayol_yaz(lnk, exe, aciklama).map_err(teknik);
     match kisayol_karari_argumanli(var, hedef, arguman, exe) {
-        KisayolKarari::Dokunma => Ok("zaten var, bu exe'yi gösteriyor, dokunulmadı".into()),
-        KisayolKarari::Olustur => {
-            kisayol_yaz(lnk, exe)?;
-            Ok("oluşturuldu".into())
-        }
+        KisayolKarari::Dokunma => Ok(Mesaj::yeni(Metin::KisayolZatenVar)),
+        KisayolKarari::Olustur => yaz().map(|()| Mesaj::yeni(Metin::KisayolOlusturuldu)),
         KisayolKarari::Yeniden => {
-            kisayol_yaz(lnk, exe)?;
+            yaz()?;
             Ok(match okunan {
-                Ok((eski, a)) if ayni_yol_mu(&eski, exe) => format!(
-                    "bu exe'yi gösteriyordu ama argümanı {a:?} idi; {BASLANGIC_ARGUMANI} argümanıyla yeniden yazıldı"
-                ),
-                Ok((eski, _)) if !eski.is_empty() => format!(
-                    "başka bir exe'yi gösteriyordu ({eski}); bu exe'ye göre yeniden yazıldı"
-                ),
-                Ok(_) => "hedefi boştu; bu exe'ye göre yeniden yazıldı".into(),
-                Err(e) => format!("hedefi okunamadı ({e}); bu exe'ye göre yeniden yazıldı"),
+                Ok((eski, a)) if ayni_yol_mu(&eski, exe) => {
+                    let m = Mesaj::yeni(Metin::KisayolYenidenArguman);
+                    m.arg(format!("{a:?}")).arg(BASLANGIC_ARGUMANI)
+                }
+                Ok((eski, _)) if !eski.is_empty() => {
+                    Mesaj::yeni(Metin::KisayolYenidenBaskaExe).arg(eski)
+                }
+                Ok(_) => Mesaj::yeni(Metin::KisayolYenidenHedefBos),
+                Err(e) => Mesaj::yeni(Metin::KisayolYenidenOkunamadi).arg(e),
             })
         }
     }
@@ -257,102 +266,131 @@ pub fn baslangic_var_mi() -> bool {
 }
 
 /// "Bilgisayar açılınca başlat": `ac` ise başlangıç kısayolunu kurar (`kur`un kısayol adımı),
-/// değilse siler. URL şemasına dokunmaz. Yapılanı düz metinle döndürür.
-pub fn baslangic_ayarla(ac: bool) -> Result<String, String> {
-    baslangic_degistir(&kisayol_yolu()?, &exe_yolu()?, ac)
+/// değilse siler. URL şemasına dokunmaz. Yapılanı çevrilebilir iletiyle döndürür (günlüğe
+/// `Display` ile Türkçe gider); `dil`: kısayolun açıklama metninin dili.
+pub fn baslangic_ayarla(ac: bool, dil: Dil) -> Result<Mesaj, Mesaj> {
+    let aciklama = metin(dil, Metin::KisayolAciklama);
+    baslangic_degistir(&kisayol_yolu()?, &exe_yolu()?, ac, aciklama)
 }
 
-fn baslangic_degistir(lnk: &str, exe: &str, ac: bool) -> Result<String, String> {
+fn baslangic_degistir(lnk: &str, exe: &str, ac: bool, aciklama: &str) -> Result<Mesaj, Mesaj> {
     if ac {
-        return kisayolu_duzenle(lnk, exe);
+        return kisayolu_duzenle(lnk, exe, aciklama);
     }
     match std::fs::remove_file(lnk) {
-        Ok(()) => Ok("silindi".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("zaten yoktu".into()),
-        Err(e) => Err(format!("kısayol silinemedi ({lnk}): {e}")),
+        Ok(()) => Ok(Mesaj::yeni(Metin::KisayolSilindi)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(Mesaj::yeni(Metin::KisayolZatenYoktu))
+        }
+        Err(e) => Err(Mesaj::yeni(Metin::KurKisayolSilinemedi)
+            .arg(lnk)
+            .arg(e.to_string())),
     }
 }
 
-fn exe_yolu() -> Result<String, String> {
+fn exe_yolu() -> Result<String, Mesaj> {
     std::env::current_exe()
         .map(|p| p.display().to_string())
-        .map_err(|e| format!("exe yolu okunamadı: {e}"))
+        .map_err(|e| Mesaj::yeni(Metin::KurExeOkunamadi).arg(e.to_string()))
 }
 
-fn kisayol_yolu() -> Result<String, String> {
+fn kisayol_yolu() -> Result<String, Mesaj> {
     std::env::var("APPDATA")
         .map(|a| baslangic_kisayolu(&a))
-        .map_err(|_| "%APPDATA% tanımsız".to_owned())
+        .map_err(|_| Mesaj::yeni(Metin::KurAppdataYok))
 }
 
-fn kur_icin() -> Result<(), String> {
+/// `kur`/`kaldir` çıktısının dili: `ayar.toml`daki `dil` (dosya yok, okunamaz ya da bozuksa
+/// `otomatik`) ve Windows görüntü dili. Dosyaya DOKUNMAZ (bozuksa kenara almaz).
+fn konsol_dili() -> Dil {
+    konsol_dili_dizinden(gunluk::dizin().as_deref(), crate::dil::sistem_langid())
+}
+
+fn konsol_dili_dizinden(dizin: Option<&std::path::Path>, sistem_langid: u16) -> Dil {
+    let tercih = dizin
+        .and_then(|d| std::fs::read_to_string(d.join(ayar::DOSYA_ADI)).ok())
+        .and_then(|m| Ayarlar::toml_coz(&m).ok())
+        .map_or(DilTercihi::Otomatik, |(a, _)| a.dil);
+    tercih.coz(sistem_langid)
+}
+
+fn kur_icin(dil: Dil) -> Result<(), Mesaj> {
+    let m = |m, a: &[&str]| bicim(dil, m, a);
     let exe = exe_yolu()?;
-    println!("exe: {exe}");
+    println!("{}", m(Metin::KurExe, &[&exe]));
     let lnk = kisayol_yolu()?;
-    println!(
-        "başlangıç kısayolu: {lnk}\n  {}",
-        kisayolu_duzenle(&lnk, &exe)?
-    );
+    let durum = kisayolu_duzenle(&lnk, &exe, metin(dil, Metin::KisayolAciklama))?;
+    println!("{}", m(Metin::KurBaslangic, &[&lnk, &durum.yaz(dil)]));
     let degerler = sema_degerleri(&exe);
     let guncel = degerler
         .iter()
         .all(|(k, ad, veri)| kayit::hkcu_deger_oku(k, ad).as_deref() == Some(veri.as_str()));
+    let anahtar = sema_anahtari();
     if guncel {
-        println!(
-            "URL şeması {SEMA}: HKCU\\{}\n  zaten güncel",
-            sema_anahtari()
-        );
+        println!("{}", m(Metin::KurSemaGuncel, &[SEMA, &anahtar]));
     } else {
         for (k, ad, veri) in &degerler {
-            kayit::hkcu_deger_yaz(k, ad, veri)
-                .map_err(|e| format!("kayıt yazılamadı (HKCU\\{k}): hata {e}"))?;
+            kayit::hkcu_deger_yaz(k, ad, veri).map_err(|e| {
+                Mesaj::yeni(Metin::KurKayitYazilamadi)
+                    .arg(k.to_string())
+                    .arg(e.to_string())
+            })?;
         }
-        println!("URL şeması {SEMA}: HKCU\\{}\n  yazıldı", sema_anahtari());
-        println!("  komut: {}", url_komutu(&exe));
+        println!("{}", m(Metin::KurSemaYazildi, &[SEMA, &anahtar]));
+        println!("{}", m(Metin::KurKomut, &[&url_komutu(&exe)]));
     }
     Ok(())
 }
 
 /// `logseq-tepsi kur`: çıkış kodu 0 başarılı.
 pub fn kur() -> i32 {
-    match kur_icin() {
+    let dil = konsol_dili();
+    match kur_icin(dil) {
         Ok(()) => {
-            println!("kurulum tamam");
+            println!("{}", metin(dil, Metin::KurTamam));
             0
         }
         Err(e) => {
-            println!("HATA: {e}");
+            println!("{}", bicim(dil, Metin::KurHata, &[&e.yaz(dil)]));
             1
         }
     }
 }
 
-fn kaldir_icin() -> Result<(), String> {
+fn kaldir_icin(dil: Dil) -> Result<(), Mesaj> {
+    let m = |m, a: &[&str]| bicim(dil, m, a);
     let lnk = kisayol_yolu()?;
     match std::fs::remove_file(&lnk) {
-        Ok(()) => println!("başlangıç kısayolu silindi: {lnk}"),
+        Ok(()) => println!("{}", m(Metin::KaldirKisayolSilindi, &[&lnk])),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("başlangıç kısayolu yok: {lnk}");
+            println!("{}", m(Metin::KaldirKisayolYok, &[&lnk]));
         }
-        Err(e) => return Err(format!("kısayol silinemedi ({lnk}): {e}")),
+        Err(e) => {
+            let hata = Mesaj::yeni(Metin::KurKisayolSilinemedi).arg(lnk);
+            return Err(hata.arg(e.to_string()));
+        }
     }
-    match kayit::hkcu_agac_sil(&sema_anahtari()) {
-        Ok(true) => println!("URL şeması silindi: HKCU\\{}", sema_anahtari()),
-        Ok(false) => println!("URL şeması yok: HKCU\\{}", sema_anahtari()),
-        Err(e) => return Err(format!("şema anahtarı silinemedi: hata {e}")),
+    let anahtar = sema_anahtari();
+    match kayit::hkcu_agac_sil(&anahtar) {
+        Ok(true) => println!("{}", m(Metin::KaldirSemaSilindi, &[&anahtar])),
+        Ok(false) => println!("{}", m(Metin::KaldirSemaYok, &[&anahtar])),
+        Err(e) => {
+            return Err(Mesaj::yeni(Metin::KurSemaSilinemedi).arg(e.to_string()));
+        }
     }
     Ok(())
 }
 
 /// `logseq-tepsi kaldir`: yalnız kendi kısayolunu ve şema anahtarını siler.
 pub fn kaldir() -> i32 {
-    match kaldir_icin() {
+    let dil = konsol_dili();
+    match kaldir_icin(dil) {
         Ok(()) => {
-            println!("kaldırma tamam");
+            println!("{}", metin(dil, Metin::KaldirTamam));
             0
         }
         Err(e) => {
-            println!("HATA: {e}");
+            println!("{}", bicim(dil, Metin::KurHata, &[&e.yaz(dil)]));
             1
         }
     }
@@ -362,6 +400,13 @@ pub fn kaldir() -> i32 {
 mod testler {
     use super::*;
 
+    const ACIKLAMA: &str = "sınama";
+
+    /// Sınama sonucunun Türkçe metni (başarısızsa sınama düşer).
+    fn tr(sonuc: Result<Mesaj, Mesaj>) -> String {
+        sonuc.unwrap().yaz(Dil::Tr)
+    }
+
     /// COM yolunu gerçekten dener ama yalnız geçici dizine yazar (başlangıç klasörüne değil).
     #[test]
     fn kisayol_gecici_dizine_yazilir() {
@@ -369,7 +414,7 @@ mod testler {
         std::fs::create_dir_all(&dir).unwrap();
         let lnk = dir.join("sina.lnk");
         let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
-        kisayol_yaz(lnk.to_str().unwrap(), exe).unwrap();
+        kisayol_yaz(lnk.to_str().unwrap(), exe, ACIKLAMA).unwrap();
         let boyut = std::fs::metadata(&lnk).unwrap().len();
         if std::env::var_os("LOGSEQ_TEPSI_LNK_KALSIN").is_none() {
             let _ = std::fs::remove_dir_all(&dir);
@@ -392,11 +437,11 @@ mod testler {
             r"C:\Program Files\Yeni\logseq-tepsi.exe",
         );
 
-        assert_eq!(kisayolu_duzenle(lnk_s, eski).unwrap(), "oluşturuldu");
+        assert_eq!(tr(kisayolu_duzenle(lnk_s, eski, ACIKLAMA)), "oluşturuldu");
         assert_eq!(kisayol_hedefi(lnk_s).unwrap(), eski);
 
         let bayt = std::fs::read(&lnk).unwrap();
-        let ayni = kisayolu_duzenle(lnk_s, eski).unwrap();
+        let ayni = tr(kisayolu_duzenle(lnk_s, eski, ACIKLAMA));
         assert!(ayni.contains("dokunulmadı"), "{ayni}");
         assert_eq!(
             std::fs::read(&lnk).unwrap(),
@@ -404,7 +449,7 @@ mod testler {
             "aynı exe: dosya değişmemeli"
         );
 
-        let degisti = kisayolu_duzenle(lnk_s, yeni).unwrap();
+        let degisti = tr(kisayolu_duzenle(lnk_s, yeni, ACIKLAMA));
         assert!(
             degisti.contains("yeniden yazıldı") && degisti.contains(eski),
             "{degisti}"
@@ -412,7 +457,7 @@ mod testler {
         assert_eq!(kisayol_hedefi(lnk_s).unwrap(), yeni);
 
         std::fs::write(&lnk, b"bozuk").unwrap();
-        let bozuk = kisayolu_duzenle(lnk_s, yeni).unwrap();
+        let bozuk = tr(kisayolu_duzenle(lnk_s, yeni, ACIKLAMA));
         assert!(bozuk.contains("yeniden yazıldı"), "{bozuk}");
         assert_eq!(kisayol_hedefi(lnk_s).unwrap(), yeni);
 
@@ -443,20 +488,20 @@ mod testler {
         let lnk_s = lnk.to_str().unwrap();
         let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
 
-        kisayolu_duzenle(lnk_s, exe).unwrap();
+        tr(kisayolu_duzenle(lnk_s, exe, ACIKLAMA));
         let (hedef, arguman) = kisayol_oku(lnk_s).unwrap();
         assert_eq!((hedef.as_str(), arguman.as_str()), (exe, "--oturum"));
 
         // Eski kurulumu taklit et: aynı hedef, argümansız kısayol.
-        kisayol_yaz_argumanli(lnk_s, exe, "").unwrap();
+        kisayol_yaz_argumanli(lnk_s, exe, "", ACIKLAMA).unwrap();
         assert_eq!(kisayol_oku(lnk_s).unwrap().1, "");
-        let mesaj = kisayolu_duzenle(lnk_s, exe).unwrap();
+        let mesaj = tr(kisayolu_duzenle(lnk_s, exe, ACIKLAMA));
         assert!(
             mesaj.contains("argümanı") && mesaj.contains("yeniden yazıldı"),
             "{mesaj}"
         );
         assert_eq!(kisayol_oku(lnk_s).unwrap().1, "--oturum");
-        let ayni = kisayolu_duzenle(lnk_s, exe).unwrap();
+        let ayni = tr(kisayolu_duzenle(lnk_s, exe, ACIKLAMA));
         assert!(ayni.contains("dokunulmadı"), "{ayni}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -471,16 +516,86 @@ mod testler {
         let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
 
         assert_eq!(
-            baslangic_degistir(lnk_s, exe, false).unwrap(),
+            tr(baslangic_degistir(lnk_s, exe, false, ACIKLAMA)),
             "zaten yoktu"
         );
-        assert_eq!(baslangic_degistir(lnk_s, exe, true).unwrap(), "oluşturuldu");
+        assert_eq!(
+            tr(baslangic_degistir(lnk_s, exe, true, ACIKLAMA)),
+            "oluşturuldu"
+        );
         assert!(lnk.exists());
-        assert!(baslangic_degistir(lnk_s, exe, true)
-            .unwrap()
-            .contains("dokunulmadı"));
-        assert_eq!(baslangic_degistir(lnk_s, exe, false).unwrap(), "silindi");
+        assert!(tr(baslangic_degistir(lnk_s, exe, true, ACIKLAMA)).contains("dokunulmadı"));
+        assert_eq!(
+            tr(baslangic_degistir(lnk_s, exe, false, ACIKLAMA)),
+            "silindi"
+        );
         assert!(!lnk.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kısayol adımının durum iletisi iki dilde: aynı karar, çevrilmiş metin.
+    #[test]
+    fn kisayol_durumu_iki_dilde_yazilir() {
+        let dir = gecici_dizin("durum-dil");
+        let lnk = dir.join("Logseq-tepsi.lnk");
+        let lnk_s = lnk.to_str().unwrap();
+        let exe = r"C:\Program Files\Araclar\logseq-tepsi.exe";
+        let en = |s: Result<Mesaj, Mesaj>| s.unwrap().yaz(Dil::En);
+
+        assert_eq!(
+            en(baslangic_degistir(lnk_s, exe, false, ACIKLAMA)),
+            "did not exist"
+        );
+        assert_eq!(
+            en(baslangic_degistir(lnk_s, exe, true, ACIKLAMA)),
+            "created"
+        );
+        let ayni = en(baslangic_degistir(lnk_s, exe, true, ACIKLAMA));
+        assert!(ayni.contains("left untouched"), "{ayni}");
+        let baska = en(kisayolu_duzenle(
+            lnk_s,
+            r"C:\Baska\logseq-tepsi.exe",
+            ACIKLAMA,
+        ));
+        assert!(
+            baska.contains("rewritten for this exe") && baska.contains(exe),
+            "{baska}"
+        );
+        assert_eq!(
+            en(baslangic_degistir(lnk_s, exe, false, ACIKLAMA)),
+            "deleted"
+        );
+        // Günlüğe giden `Display` Türkçedir.
+        let m = Mesaj::yeni(Metin::KisayolZatenYoktu);
+        assert_eq!(m.to_string(), "zaten yoktu");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `kur`/`kaldir` dili: dosyadaki açık seçim sistem dilini ezer; dosya yok ya da bozuksa
+    /// `otomatik` (sistem dili). Sınama dosyaya yazmaz, yalnız geçici dizini okutur.
+    #[test]
+    fn konsol_dili_ayar_dosyasindan_yoksa_sistem_dilinden() {
+        const TR: u16 = 0x041F;
+        const EN: u16 = 0x0409;
+        let dir = gecici_dizin("konsol-dil");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), EN), Dil::En, "dosya yok");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), TR), Dil::Tr, "dosya yok");
+        assert_eq!(konsol_dili_dizinden(None, TR), Dil::Tr, "dizin yok");
+        let yaz = |s: &str| std::fs::write(dir.join("ayar.toml"), s).unwrap();
+        yaz("dil = \"en\"\n");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), TR), Dil::En);
+        yaz("dil = \"tr\"\n");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), EN), Dil::Tr);
+        yaz("dil = \"otomatik\"\n");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), EN), Dil::En);
+        assert_eq!(konsol_dili_dizinden(Some(&dir), TR), Dil::Tr);
+        // Bozuk dosya: sistem diline düşer ve dosyaya dokunulmaz (kenara alınmaz).
+        yaz("dil = [bozuk");
+        assert_eq!(konsol_dili_dizinden(Some(&dir), EN), Dil::En);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("ayar.toml")).unwrap(),
+            "dil = [bozuk"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -6,6 +6,7 @@
 //! `GOVDE_TAVANI`); öbür isteklerde gövde yok sayılır.
 
 use logseq_tepsi_cekirdek::ayar::{self, AyarDegeri};
+use logseq_tepsi_cekirdek::metin::{Dil, Mesaj, Metin};
 
 pub const PORT: u16 = 47123;
 /// `POST /ayar` gövdesi üst sınırı (bayt).
@@ -260,9 +261,9 @@ pub fn govde_uzunlugu(istek: &Istek) -> Result<usize, Yanit> {
 
 /// `POST /ayar`: gövde geçerliyse 204 + `Is::Ayar` (sunucu, pencere sahibinin sonucunu varsa 200 +
 /// gövde olarak döndürür), değilse 400 (nedenle birlikte).
-fn ayar_yaniti(govde: &[u8], cors: Vec<(String, String)>) -> Yanit {
+fn ayar_yaniti(govde: &[u8], dil: Dil, cors: Vec<(String, String)>) -> Yanit {
     let coz = std::str::from_utf8(govde)
-        .map_err(|_| "gövde UTF-8 değil".to_owned())
+        .map_err(|_| Mesaj::yeni(Metin::HataGovdeUtf8))
         .and_then(ayar::satirlari_coz)
         // Kısayol çakışması (aynı tuş iki kimliğe verilemez) kayıttan önce reddedilir.
         .and_then(|d| ayar::cakisma_denetle(&ayar::guncel(), &d).map(|()| d));
@@ -274,7 +275,7 @@ fn ayar_yaniti(govde: &[u8], cors: Vec<(String, String)>) -> Yanit {
             is: Is::Ayar(degerler),
         },
         Err(neden) => Yanit {
-            govde: format!("400 Bad Request\n{neden}\n"),
+            govde: format!("400 Bad Request\n{}\n", neden.yaz(dil)),
             ..hata(400, cors)
         },
     }
@@ -282,11 +283,13 @@ fn ayar_yaniti(govde: &[u8], cors: Vec<(String, String)>) -> Yanit {
 
 /// Yetki + yönlendirme kararı. `durum` yalnız yetkili `GET /durum` için, `ayar_metni` yalnız
 /// yetkili `GET /ayar` için çağrılır (pencere sayımı pahalı olabilir): durum = (tepside gizli
-/// pencere sayısı, Logseq açık mı). `govde`: yalnız `POST /ayar` için anlamlı.
+/// pencere sayısı, Logseq açık mı). `govde`: yalnız `POST /ayar` için anlamlı; `dil`: 400
+/// nedeninin yazıldığı etkin dil.
 pub fn karar_ver(
     istek: &Istek,
     govde: &[u8],
     surum: &str,
+    dil: Dil,
     durum: impl FnOnce() -> (usize, bool),
     ayar_metni: impl FnOnce() -> String,
 ) -> Yanit {
@@ -348,7 +351,7 @@ pub fn karar_ver(
             basliklar: cors_basliklari(origin),
             is: Is::Yok,
         },
-        ("POST", "/ayar") => ayar_yaniti(govde, cors),
+        ("POST", "/ayar") => ayar_yaniti(govde, dil, cors),
         ("POST", "/gizle") => yetkili(204, Is::Gizle),
         ("POST", "/goster") => yetkili(204, Is::Goster),
         (_, "/durum") => yanit_405("GET", cors),
@@ -386,6 +389,7 @@ pub fn yanit_baytlari(y: &Yanit) -> Vec<u8> {
 #[cfg(test)]
 mod testler {
     use super::*;
+    use logseq_tepsi_cekirdek::metin::DilTercihi;
 
     fn istek(metot: &str, yol: &str, basliklar: &[(&str, &str)]) -> Istek {
         Istek {
@@ -405,6 +409,7 @@ mod testler {
             i,
             &[],
             "9.9.9",
+            Dil::Tr,
             || (2, true),
             || {
                 "tik=tek
@@ -544,6 +549,7 @@ mod testler {
             &istek("GET", "/durum", &[]),
             &[],
             "1",
+            Dil::Tr,
             || {
                 cagrildi = true;
                 (0, false)
@@ -857,6 +863,7 @@ mod testler {
             &istek("POST", "/ayar", &b),
             govde.as_bytes(),
             "9.9.9",
+            Dil::Tr,
             || (2, true),
             || "tik=tek\n".into(),
         )
@@ -884,6 +891,7 @@ mod testler {
             &istek("GET", "/ayar", &[]),
             &[],
             "1",
+            Dil::Tr,
             || (0, false),
             || {
                 cagrildi = true;
@@ -904,6 +912,7 @@ mod testler {
             &istek("POST", "/ayar", &[]),
             b"tik=cift",
             "1",
+            Dil::Tr,
             || (0, false),
             String::new,
         );
@@ -935,6 +944,7 @@ mod testler {
             &istek("POST", "/ayar", &[YETKI]),
             &[0xFF, 0xFE],
             "1",
+            Dil::Tr,
             || (0, false),
             String::new,
         );
@@ -999,5 +1009,78 @@ mod testler {
             &[YETKI, ("Host", "x:47123")]
         )));
         assert!(!yetkili_mi(&istek("OPTIONS", "/ayar", &[YETKI])));
+    }
+
+    fn ayar_post_dilli(govde: &str, dil: Dil) -> Yanit {
+        karar_ver(
+            &istek("POST", "/ayar", &[YETKI]),
+            govde.as_bytes(),
+            "9.9.9",
+            dil,
+            || (2, true),
+            || "tik=tek\n".into(),
+        )
+    }
+
+    #[test]
+    fn post_ayar_dil_anahtari_204_gecersizse_400_nedeni_dile_gore() {
+        for (deger, beklenen) in [
+            ("otomatik", DilTercihi::Otomatik),
+            ("tr", DilTercihi::Tr),
+            ("en", DilTercihi::En),
+        ] {
+            let r = ayar_post_dilli(&format!("dil={deger}"), Dil::Tr);
+            assert_eq!(r.kod, 204, "{deger}");
+            assert_eq!(r.is, Is::Ayar(vec![AyarDegeri::Dil(beklenen)]), "{deger}");
+        }
+        let tr = ayar_post_dilli("dil=de", Dil::Tr);
+        assert_eq!((tr.kod, tr.is), (400, Is::Yok));
+        assert_eq!(
+            tr.govde,
+            "400 Bad Request\ndil: otomatik, tr ya da en olmalı: de\n"
+        );
+        let en = ayar_post_dilli("dil=de", Dil::En);
+        assert_eq!(en.kod, 400);
+        assert_eq!(
+            en.govde,
+            "400 Bad Request\ndil: must be otomatik, tr or en: de\n"
+        );
+        // Diğer 400 nedenleri de etkin dilde; gövde kodu ve ilk satır aynı kalır.
+        for (govde, beklenen) in [
+            ("x=1", "unknown key: x"),
+            ("", "no setting lines"),
+            ("tik", "no '=' in line: tik"),
+            ("kisayol_not=Ctrl+Foo", "kisayol_not: unknown key: Foo"),
+        ] {
+            let r = ayar_post_dilli(govde, Dil::En);
+            assert_eq!(r.kod, 400, "{govde:?}");
+            assert_eq!(
+                r.govde,
+                format!("400 Bad Request\n{beklenen}\n"),
+                "{govde:?}"
+            );
+        }
+        let utf8 = karar_ver(
+            &istek("POST", "/ayar", &[YETKI]),
+            &[0xFF, 0xFE],
+            "1",
+            Dil::En,
+            || (0, false),
+            String::new,
+        );
+        assert_eq!(utf8.govde, "400 Bad Request\nbody is not UTF-8\n");
+    }
+
+    #[test]
+    fn get_ayar_govdesini_saglayici_uretir_dil_satiri_dahil() {
+        let r = karar_ver(
+            &istek("GET", "/ayar", &[YETKI]),
+            &[],
+            "9.9.9",
+            Dil::En,
+            || (0, false),
+            || "tik=tek\ndil=en\n".into(),
+        );
+        assert_eq!((r.kod, r.govde.as_str()), (200, "tik=tek\ndil=en\n"));
     }
 }

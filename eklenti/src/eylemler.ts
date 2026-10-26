@@ -18,12 +18,12 @@ import {
   type EklentiAyarlari,
 } from "./ayar";
 import {
-  API_AYARI_BEKLEMEDE,
+  apiAyariBeklemede,
   apiAyariYazilamadi,
   ayarIletilemedi,
   ayarReddedildi,
-  BASLATILAMADI,
-  BASLATILIYOR,
+  baslatilamadi,
+  baslatiliyor,
   baslatildi,
   durumMetni,
   hataMetni,
@@ -110,7 +110,7 @@ export async function baslatEylemi(o: Ortam, ayar: BaslatAyari = {}): Promise<Ba
     o.mesaj(hataMetni(once.hata), "warning", 8000);
     return "hata";
   }
-  o.mesaj(BASLATILIYOR, "success", 6000);
+  o.mesaj(baslatiliyor(), "success", 6000);
   o.adresAc(BASLAT_ADRESI);
   for (let i = 0; i < deneme; i++) {
     await o.uyku(aralik);
@@ -120,7 +120,7 @@ export async function baslatEylemi(o: Ortam, ayar: BaslatAyari = {}): Promise<Ba
       return "baslatildi";
     }
   }
-  o.mesaj(BASLATILAMADI, "warning", 12000);
+  o.mesaj(baslatilamadi(), "warning", 12000);
   return "baslatilamadi";
 }
 
@@ -190,7 +190,7 @@ async function apiAyariSonucu(
 ): Promise<void> {
   const durum = sonuc?.api_otomatik_baslat;
   if (durum === "beklemede") {
-    o.mesaj(API_AYARI_BEKLEMEDE, "success", 8000);
+    o.mesaj(apiAyariBeklemede(), "success", 8000);
     return;
   }
   if (durum !== "hata") return;

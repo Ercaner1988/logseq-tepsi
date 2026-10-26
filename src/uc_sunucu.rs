@@ -7,7 +7,7 @@ use crate::ayar::AyarDegeri;
 use crate::sunucu::Saglayici;
 use crate::tepsi::{WM_UC_AYAR, WM_UC_GIZLE, WM_UC_GOSTER};
 use crate::uc::{Devir, Is};
-use crate::{api, ayarlar, pencere};
+use crate::{api, ayarlar, dil, pencere};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     PostMessageW, SendMessageTimeoutW, SMTO_ABORTIFHUNG,
@@ -61,6 +61,7 @@ pub fn baslat(ileti_penceresi: isize) {
         durum: pencere::durum_ozeti,
         ayar_metni: ayarlar::govde,
         api_acik: api::acik_mi,
+        dil: dil::etkin_dil,
     };
     crate::sunucu::baslat(sag, devret);
 }

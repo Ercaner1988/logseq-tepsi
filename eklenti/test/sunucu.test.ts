@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Durum, Sonuc } from "../src/ag";
 import { durumAyristir } from "../src/ag";
-import { API_BASLAT_ETIKETI, API_DURDUR_ETIKETI, durumMetni } from "../src/mesajlar";
+import { apiBaslatEtiketi, apiDurdurEtiketi, durumMetni } from "../src/mesajlar";
 import {
   apiEylemiCoz,
   apiSunucusuEylemi,
@@ -138,9 +138,9 @@ describe("/durum api satırı", () => {
 
 describe("komut paleti etiketleri", () => {
   test("API başlat/durdur canlı doğrulanana kadar (deneysel) etiketli", () => {
-    expect(API_BASLAT_ETIKETI).toContain("(deneysel)");
-    expect(API_DURDUR_ETIKETI).toContain("(deneysel)");
-    expect(API_BASLAT_ETIKETI).toContain("başlat");
-    expect(API_DURDUR_ETIKETI).toContain("durdur");
+    expect(apiBaslatEtiketi()).toContain("(deneysel)");
+    expect(apiDurdurEtiketi()).toContain("(deneysel)");
+    expect(apiBaslatEtiketi()).toContain("başlat");
+    expect(apiDurdurEtiketi()).toContain("durdur");
   });
 });

@@ -3,6 +3,7 @@
 //! sınırlarını bulur (dizge, yorum, karakter sabiti ve iç içe kaplara kanmadan). Beklenmeyen
 //! yapıda `Red` döner; hata iletisi içerikten hiçbir şey taşımaz.
 
+use logseq_tepsi_metin::{metin, Dil, Metin};
 use std::fmt;
 
 pub const ANAHTAR: &str = ":server/autostart";
@@ -23,20 +24,28 @@ pub enum Red {
     Dogrulanamadi,
 }
 
+impl Red {
+    /// Nedenin çevrilebilir metni (`Metin` şablonu).
+    pub fn metin(self) -> Metin {
+        match self {
+            Red::Bos => Metin::RedBos,
+            Red::UstDuzeyHaritaDegil => Metin::RedUstDuzeyHaritaDegil,
+            Red::Kapanmamis => Metin::RedKapanmamis,
+            Red::EslesmeyenKapanis => Metin::RedEslesmeyenKapanis,
+            Red::ArtikIcerik => Metin::RedArtikIcerik,
+            Red::TekEleman => Metin::RedTekEleman,
+            Red::YasakBicim => Metin::RedYasakBicim,
+            Red::CiftAnahtar => Metin::RedCiftAnahtar,
+            Red::DegerBeklenmedik => Metin::RedDegerBeklenmedik,
+            Red::Dogrulanamadi => Metin::RedDogrulanamadi,
+        }
+    }
+}
+
+/// Günlük için Türkçe (kullanıcıya giden metin `metin()` ile dile göre çevrilir).
 impl fmt::Display for Red {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Red::Bos => "dosya boş",
-            Red::UstDuzeyHaritaDegil => "üst düzey öğe bir harita değil",
-            Red::Kapanmamis => "kapanmamış dizge ya da harita",
-            Red::EslesmeyenKapanis => "eşleşmeyen kapanış",
-            Red::ArtikIcerik => "haritadan sonra artık içerik var",
-            Red::TekEleman => "haritada anahtar/değer sayısı tek",
-            Red::YasakBicim => "beklenmeyen biçim (#_ ya da ^)",
-            Red::CiftAnahtar => "anahtar birden çok kez var",
-            Red::DegerBeklenmedik => "anahtarın değeri true/false/nil değil",
-            Red::Dogrulanamadi => "yazılacak çıktı doğrulanamadı, yazılmadı",
-        })
+        f.write_str(metin(Dil::Tr, self.metin()))
     }
 }
 

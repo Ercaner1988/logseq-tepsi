@@ -4,6 +4,7 @@
 //! Hata iletileri dosya içeriği, yol ya da değer taşımaz (yalnız `ErrorKind`).
 
 use crate::edn::{self, Red};
+use logseq_tepsi_metin::{Dil, Mesaj, Metin};
 use std::fmt;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -22,14 +23,22 @@ pub enum Hata {
     Yazilamadi(ErrorKind),
 }
 
+impl Hata {
+    /// Çevrilebilir neden (dosya içeriği, yol ya da değer taşımaz; yalnız `ErrorKind` adı).
+    pub fn mesaj(&self) -> Mesaj {
+        match self {
+            Hata::Okunamadi(k) => Mesaj::yeni(Metin::HataConfigsOkunamadi).arg(k.to_string()),
+            Hata::Edn(r) => Mesaj::yeni(Metin::HataConfigsYapi).arg(r.metin()),
+            Hata::YedekAlinamadi(k) => Mesaj::yeni(Metin::HataConfigsYedek).arg(k.to_string()),
+            Hata::Yazilamadi(k) => Mesaj::yeni(Metin::HataConfigsYazilamadi).arg(k.to_string()),
+        }
+    }
+}
+
+/// Günlük için Türkçe (eklentiye giden neden `mesaj().yaz(dil)` ile çevrilir).
 impl fmt::Display for Hata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Hata::Okunamadi(k) => write!(f, "configs.edn okunamadı ({k})"),
-            Hata::Edn(r) => write!(f, "configs.edn beklenmeyen yapıda, yazılmadı: {r}"),
-            Hata::YedekAlinamadi(k) => write!(f, "yedek alınamadı, yazılmadı ({k})"),
-            Hata::Yazilamadi(k) => write!(f, "configs.edn yazılamadı ({k})"),
-        }
+        f.write_str(&self.mesaj().yaz(Dil::Tr))
     }
 }
 

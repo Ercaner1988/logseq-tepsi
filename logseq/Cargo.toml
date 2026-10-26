@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "logseq-tepsi'nin Logseq tarafı: configs.edn'de :server/autostart düzenleyicisi, API sunucusu yoklaması ve bekleyen ayar kararı. Win32'ye bağımlı değildir."
+
+[dependencies]
+logseq-tepsi-metin = { path = "../metin" }

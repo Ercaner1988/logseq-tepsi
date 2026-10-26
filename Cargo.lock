@@ -40,15 +40,26 @@ name = "logseq-tepsi-cekirdek"
 version = "0.1.0"
 dependencies = [
  "logseq-tepsi-kisayol",
+ "logseq-tepsi-metin",
  "toml",
 ]
 
 [[package]]
 name = "logseq-tepsi-kisayol"
 version = "0.1.0"
+dependencies = [
+ "logseq-tepsi-metin",
+]
 
 [[package]]
 name = "logseq-tepsi-logseq"
+version = "0.1.0"
+dependencies = [
+ "logseq-tepsi-metin",
+]
+
+[[package]]
+name = "logseq-tepsi-metin"
 version = "0.1.0"
 
 [[package]]

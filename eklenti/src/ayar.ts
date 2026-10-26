@@ -1,5 +1,9 @@
 // Araç ayarları (GET/POST /ayar) ile Logseq eklenti ayarları arasındaki eşleme (saf).
 // Logseq'e bağımlı değildir. Araç tek kaynaktır; eklenti ayarları onun aynasıdır.
+import { DIL_SECENEKLERI, etkinDil, metinler, type Dil } from "./metin";
+
+/** Logseq içi "Tepsiye gizle" kısayolunun varsayılanı (araç ayarı değil, yalnız eklentide). */
+export const VARSAYILAN_KISAYOL = "mod+shift+x";
 
 export type EklentiDegeri = string | boolean;
 export type EklentiAyarlari = Record<string, EklentiDegeri>;
@@ -14,8 +18,11 @@ export interface AyarTanimi {
   tur: Tur;
   secenekler?: readonly string[];
   varsayilan: EklentiDegeri;
-  baslik: string;
-  aciklama: string;
+  /**
+   * Eski araç sürümleri bu anahtarı hiç döndürmez (örn. `dil`): yokluğu hata değildir, ayar yalnız
+   * eklentide yaşar ve araca gönderilmez (eski araç bilinmeyen anahtarı 400 ile reddederdi).
+   */
+  istegeBagli?: boolean;
 }
 
 export const AYAR_TANIMLARI: readonly AyarTanimi[] = [
@@ -25,9 +32,6 @@ export const AYAR_TANIMLARI: readonly AyarTanimi[] = [
     tur: "enum",
     secenekler: ["tepsi", "gorev_cubugu"],
     varsayilan: "tepsi",
-    baslik: "Küçültme düğmesi (araç)",
-    aciklama:
-      "tepsi: küçültünce Logseq tepsiye gizlenir. gorev_cubugu: küçültünce görev çubuğunda kalır, araç gizlemez.",
   },
   {
     arac: "tik",
@@ -35,55 +39,36 @@ export const AYAR_TANIMLARI: readonly AyarTanimi[] = [
     tur: "enum",
     secenekler: ["tek", "cift"],
     varsayilan: "tek",
-    baslik: "Tepsi simgesi tıkı (araç)",
-    aciklama: "tek: tek tıkla göster/gizle. cift: çift tıkla göster/gizle (tek tık bir şey yapmaz).",
   },
   {
     arac: "kapaliyken_tik_acar",
     eklenti: "kapaliykenTikAcar",
     tur: "boolean",
     varsayilan: true,
-    baslik: "Logseq kapalıyken tık Logseq'i açsın (araç)",
-    aciklama: "Kapalıyken tepsi simgesine tıklamak Logseq'i başlatsın mı. Menüdeki Göster her zaman başlatır.",
   },
   {
     arac: "kisayol_goster_gizle",
     eklenti: "kisayolGosterGizle",
     tur: "string",
     varsayilan: "Ctrl+Alt+L",
-    baslik: "Genel kısayol: Logseq'i göster/gizle (araç)",
-    aciklama:
-      "Her programda çalışan genel kısayol. Örnek: Ctrl+Alt+L, Ctrl+Shift+F12 (yalnız ASCII). " +
-      "Boş bırakırsanız kapalı olur. Başka program tuşu tutuyorsa araç ipucunda uyarır. " +
-      "Logseq içi kısayoldan (Tepsiye gizle kısayolu) ayrıdır.",
   },
   {
     arac: "oturumda_gizli_baslat",
     eklenti: "oturumdaGizliBaslat",
     tur: "boolean",
     varsayilan: false,
-    baslik: "Oturum açılınca Logseq'i gizli başlat (araç)",
-    aciklama:
-      "Bilgisayar açılışında araç başlangıç kısayolundan başlarsa Logseq'i başlatıp tepsiye gizler. " +
-      "Kısayolu `logseq-tepsi kur` (ya da menüdeki Bilgisayar açılınca başlat) yazar.",
   },
   {
     arac: "baslangicta_calis",
     eklenti: "baslangictaCalis",
     tur: "boolean",
     varsayilan: false,
-    baslik: "Bilgisayar açılınca aracı başlat (araç)",
-    aciklama: "Başlangıç klasörüne araç kısayolunu koyar ya da siler. Gerçek durum aracın kısayol dosyasıdır.",
   },
   {
     arac: "kisayol_not",
     eklenti: "kisayolNot",
     tur: "string",
     varsayilan: "Ctrl+Alt+N",
-    baslik: "Anında not: genel kısayol (araç)",
-    aciklama:
-      "Her programda çalışan genel kısayol; Logseq'i gösterir (kapalıysa başlatır) ve yeni bir not satırı açar. " +
-      "Örnek: Ctrl+Alt+N (yalnız ASCII). Boş bırakırsanız kapalı olur.",
   },
   {
     arac: "not_hedefi",
@@ -91,28 +76,26 @@ export const AYAR_TANIMLARI: readonly AyarTanimi[] = [
     tur: "enum",
     secenekler: ["gunluk", "yeni_sayfa"],
     varsayilan: "gunluk",
-    baslik: "Anında not nereye yazılsın (araç)",
-    aciklama:
-      "gunluk: bugünün günlük sayfasının sonuna boş blok. yeni_sayfa: \"Not YYYY-MM-DD HH:mm\" adlı yeni sayfa.",
   },
   {
     arac: "kalinan_sayfa",
     eklenti: "kalinanSayfa",
     tur: "boolean",
     varsayilan: true,
-    baslik: "Logseq açılınca kaldığım sayfaya dön (araç)",
-    aciklama:
-      "Logseq açıldığında, siz henüz bir sayfaya gitmediyseniz son baktığınız sayfa açılır (sayfa silinmişse ana sayfada kalır).",
   },
   {
     arac: "api_otomatik_baslat",
     eklenti: "apiOtomatikBaslat",
     tur: "boolean",
     varsayilan: false,
-    baslik: "Logseq açılınca API sunucusu otomatik başlasın (araç)",
-    aciklama:
-      "Logseq'in kendi yapılandırmasındaki (configs.edn) :server/autostart değerini değiştirir. Logseq açıkken yazılamaz: " +
-      "istek araçta bekler, Logseq kapanınca uygulanır.",
+  },
+  {
+    arac: "dil",
+    eklenti: "dil",
+    tur: "enum",
+    secenekler: DIL_SECENEKLERI,
+    varsayilan: "otomatik",
+    istegeBagli: true,
   },
 ];
 
@@ -173,6 +156,8 @@ export function degisenSatirlar(
     const once = aracDegeri(t, eski?.[t.eklenti]);
     if (simdi === once) continue;
     if (bilinen !== null && bilinen[t.arac] === simdi) continue;
+    // Araç bu anahtarı bilmiyor (eski sürüm): ayar yalnız eklentide kalır.
+    if (t.istegeBagli && bilinen !== null && !(t.arac in bilinen)) continue;
     satirlar.push(`${t.arac}=${simdi}`);
   }
   return satirlar;
@@ -188,16 +173,48 @@ export function satirlariIsle(bilinen: AracAyarlari | null, satirlar: string[]):
   return sonuc;
 }
 
-/** Logseq `useSettingsSchema` girdileri (eklenti ayar sayfasında görünür). */
-export function ayarSemasi() {
+/** Logseq `useSettingsSchema` girdileri (eklenti ayar sayfasında görünür); başlık ve açıklama `dil`de. */
+export function ayarSemasi(dil: Dil = etkinDil()) {
+  const tablo = metinler[dil].ayar;
   return AYAR_TANIMLARI.map((t) => ({
     key: t.eklenti,
     type: t.tur,
     default: t.varsayilan,
-    title: t.baslik,
-    description: t.aciklama,
+    title: tablo[t.eklenti as keyof typeof tablo].baslik,
+    description: tablo[t.eklenti as keyof typeof tablo].aciklama,
+    // enumChoices Logseq'te değerin kendisidir (ayrı görünen etiket yok): değerler dilden bağımsızdır.
     ...(t.tur === "enum"
       ? { enumChoices: [...(t.secenekler ?? [])], enumPicker: "radio" as const }
       : {}),
   }));
+}
+
+/** Eklentinin tüm ayar şeması: yalnız eklentiye ait üç ayar + araç ayarlarının aynası. */
+export function tamSema(dil: Dil = etkinDil()) {
+  const tablo = metinler[dil].ayar;
+  return [
+    {
+      key: "port",
+      type: "number",
+      default: 47123,
+      title: tablo.port.baslik,
+      description: tablo.port.aciklama,
+    },
+    {
+      key: "acilisUyarisi",
+      type: "boolean",
+      default: true,
+      title: tablo.acilisUyarisi.baslik,
+      description: tablo.acilisUyarisi.aciklama,
+    },
+    {
+      key: "kisayol",
+      type: "string",
+      default: VARSAYILAN_KISAYOL,
+      title: tablo.kisayol.baslik,
+      description: tablo.kisayol.aciklama,
+    },
+    // Aşağıdakiler tepsi aracının ayarlarıdır: açılışta araçtan okunur, değişince araca yazılır.
+    ...ayarSemasi(dil),
+  ];
 }

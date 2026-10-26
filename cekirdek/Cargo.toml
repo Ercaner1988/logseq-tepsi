@@ -8,3 +8,4 @@ description = "logseq-tepsi'nin Win32'den bağımsız saf çekirdeği: karar tab
 [dependencies]
 toml = "0.9"
 logseq-tepsi-kisayol = { path = "../kisayol" }
+logseq-tepsi-metin = { path = "../metin" }

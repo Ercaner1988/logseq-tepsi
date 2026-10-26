@@ -4,6 +4,7 @@
 //! gerçeğin kendisidir), yalnız uçtan okunur/yazılır.
 
 use crate::kisayol;
+use logseq_tepsi_metin::{DilTercihi, Mesaj, Metin};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -13,7 +14,7 @@ pub const VARSAYILAN_KISAYOL: &str = "Ctrl+Alt+L";
 pub const VARSAYILAN_KISAYOL_NOT: &str = "Ctrl+Alt+N";
 /// Dosyada tutulan anahtarlar (`baslangicta_calis` ve `api_otomatik_baslat` yok; `api_bekleyen`
 /// uca açık değil, yalnız dosyada).
-const DOSYA_ANAHTARLARI: [&str; 9] = [
+const DOSYA_ANAHTARLARI: [&str; 10] = [
     "kucultme",
     "tik",
     "kapaliyken_tik_acar",
@@ -23,6 +24,7 @@ const DOSYA_ANAHTARLARI: [&str; 9] = [
     "not_hedefi",
     "kalinan_sayfa",
     "api_bekleyen",
+    "dil",
 ];
 /// `satirlar`ın (sözleşmedeki eski GET gövdesi) kullandığı ilk dosya anahtarı sayısı.
 const ESKI_CIFT_SAYISI: usize = 5;
@@ -70,6 +72,8 @@ pub struct Ayarlar {
     pub not_hedefi: NotHedefi,
     /// Eklenti, Logseq açılışında son bakılan sayfaya dönsün mü (eklentiyle eşitlenir).
     pub kalinan_sayfa: bool,
+    /// Arayüz dili: `otomatik` (Windows görüntü dili), `tr`, `en`.
+    pub dil: DilTercihi,
     /// `api_otomatik_baslat` isteği Logseq açıkken verildi: kapanınca `configs.edn`e yazılır.
     /// Uçtan değiştirilemez (yalnız `ayar.toml`da).
     pub api_bekleyen: Option<bool>,
@@ -89,6 +93,7 @@ impl Default for Ayarlar {
             kisayol_not: VARSAYILAN_KISAYOL_NOT.to_owned(),
             not_hedefi: NotHedefi::Gunluk,
             kalinan_sayfa: true,
+            dil: DilTercihi::Otomatik,
             api_bekleyen: None,
             bilinmeyen: Vec::new(),
         }
@@ -108,6 +113,7 @@ pub enum AyarDegeri {
     KisayolNot(String),
     NotHedefi(NotHedefi),
     KalinanSayfa(bool),
+    Dil(DilTercihi),
     /// Dosyada tutulmaz: gerçek kaynak Logseq'in `configs.edn` `:server/autostart` değeri.
     ApiOtomatikBaslat(bool),
 }
@@ -121,28 +127,29 @@ fn ev(b: bool) -> &'static str {
 }
 
 /// `deger`, `a` ya da `b` (ASCII büyük/küçük harf duyarsız): `a` ise `true`.
-fn iki_secenek(anahtar: &str, deger: &str, a: &str, b: &str) -> Result<bool, String> {
+fn iki_secenek(anahtar: &str, deger: &str, a: &str, b: &str) -> Result<bool, Mesaj> {
     if deger.eq_ignore_ascii_case(a) {
         Ok(true)
     } else if deger.eq_ignore_ascii_case(b) {
         Ok(false)
     } else {
-        Err(format!("{anahtar}: {a} ya da {b} olmalı: {deger}"))
+        let m = Mesaj::yeni(Metin::HataIkiSecenek);
+        Err(m.arg(anahtar).arg(a).arg(b).arg(deger))
     }
 }
 
 /// Boş (kapalı) ya da geçerli kısayol; kurallı yazıma çevrilir.
-fn kisayol_degeri(anahtar: &str, deger: &str) -> Result<String, String> {
+fn kisayol_degeri(anahtar: &str, deger: &str) -> Result<String, Mesaj> {
     if deger.is_empty() {
         return Ok(String::new());
     }
-    let k = kisayol::ayristir(deger).map_err(|e| format!("{anahtar}: {e}"))?;
+    let k = kisayol::ayristir(deger).map_err(|e| e.onekle(anahtar))?;
     Ok(kisayol::bicimle(&k))
 }
 
 impl AyarDegeri {
     /// `anahtar=değer` çiftini doğrular.
-    pub fn coz(anahtar: &str, deger: &str) -> Result<Self, String> {
+    pub fn coz(anahtar: &str, deger: &str) -> Result<Self, Mesaj> {
         let evet_hayir = || iki_secenek(anahtar, deger, "evet", "hayir");
         Ok(match anahtar {
             "kucultme" => {
@@ -170,24 +177,29 @@ impl AyarDegeri {
                 })
             }
             "kalinan_sayfa" => Self::KalinanSayfa(evet_hayir()?),
+            "dil" => Self::Dil(DilTercihi::ayristir(deger).ok_or_else(|| {
+                let [a, b, c] = DilTercihi::ADLAR;
+                let m = Mesaj::yeni(Metin::HataUcSecenek);
+                m.arg(anahtar).arg(a).arg(b).arg(c).arg(deger)
+            })?),
             "api_otomatik_baslat" => Self::ApiOtomatikBaslat(evet_hayir()?),
-            _ => return Err(format!("bilinmeyen anahtar: {anahtar}")),
+            _ => return Err(Mesaj::yeni(Metin::HataBilinmeyenAnahtar).arg(anahtar)),
         })
     }
 }
 
 /// `POST /ayar` gövdesi: bir ya da birkaç `anahtar=değer` satırı. Biri geçersizse hepsi
 /// reddedilir (kısmi uygulama yok).
-pub fn satirlari_coz(govde: &str) -> Result<Vec<AyarDegeri>, String> {
+pub fn satirlari_coz(govde: &str) -> Result<Vec<AyarDegeri>, Mesaj> {
     let mut degerler = Vec::new();
     for satir in govde.lines().map(str::trim).filter(|s| !s.is_empty()) {
         let (anahtar, deger) = satir
             .split_once('=')
-            .ok_or_else(|| format!("satırda '=' yok: {satir}"))?;
+            .ok_or_else(|| Mesaj::yeni(Metin::HataEsitYok).arg(satir))?;
         degerler.push(AyarDegeri::coz(anahtar.trim(), deger.trim())?);
     }
     if degerler.is_empty() {
-        return Err("ayar satırı yok".into());
+        return Err(Mesaj::yeni(Metin::HataSatirYok));
     }
     Ok(degerler)
 }
@@ -195,7 +207,7 @@ pub fn satirlari_coz(govde: &str) -> Result<Vec<AyarDegeri>, String> {
 /// `degerler` uygulanınca iki genel kısayol aynı tuşa düşecekse neden (kısayol değeri taşımayan
 /// gövdeler etkilenmez: elle bozulmuş dosyadaki eski çakışma başka ayarı engellemesin). Gövdedeki
 /// değerler birlikte uygulanır, yani yer değiştirme (takas) kabul edilir.
-pub fn cakisma_denetle(mevcut: &Ayarlar, degerler: &[AyarDegeri]) -> Result<(), String> {
+pub fn cakisma_denetle(mevcut: &Ayarlar, degerler: &[AyarDegeri]) -> Result<(), Mesaj> {
     let kisayola_dokunur = degerler.iter().any(|d| {
         matches!(
             d,
@@ -205,10 +217,7 @@ pub fn cakisma_denetle(mevcut: &Ayarlar, degerler: &[AyarDegeri]) -> Result<(), 
     let mut yeni = mevcut.clone();
     degerler.iter().for_each(|d| yeni.uygula(d));
     if kisayola_dokunur && yeni.kisayollar_cakisiyor() {
-        return Err(format!(
-            "kisayol_goster_gizle ve kisayol_not aynı kısayol olamaz: {}",
-            yeni.kisayol_not
-        ));
+        return Err(Mesaj::yeni(Metin::HataKisayolAyni).arg(yeni.kisayol_not));
     }
     Ok(())
 }
@@ -230,12 +239,13 @@ impl Ayarlar {
             AyarDegeri::KisayolNot(k) => self.kisayol_not.clone_from(k),
             AyarDegeri::NotHedefi(h) => self.not_hedefi = *h,
             AyarDegeri::KalinanSayfa(b) => self.kalinan_sayfa = *b,
+            AyarDegeri::Dil(d) => self.dil = *d,
             AyarDegeri::BaslangictaCalis(_) | AyarDegeri::ApiOtomatikBaslat(_) => {}
         }
     }
 
     /// Dosya biçimindeki (anahtar, değer) çiftleri, sabit sırayla (`api_bekleyen` hariç).
-    fn cifler(&self) -> [(&'static str, String); 8] {
+    fn cifler(&self) -> [(&'static str, String); 9] {
         let kucultme = match self.kucultme {
             Kucultme::Tepsi => "tepsi",
             Kucultme::GorevCubugu => "gorev_cubugu",
@@ -256,6 +266,7 @@ impl Ayarlar {
             ("kisayol_not", self.kisayol_not.clone()),
             ("not_hedefi", self.not_hedefi.ad().into()),
             ("kalinan_sayfa", ev(self.kalinan_sayfa).into()),
+            ("dil", self.dil.ad().into()),
         ]
     }
 
@@ -273,18 +284,23 @@ impl Ayarlar {
     }
 
     /// Tam `GET /ayar` gövdesi: `satirlar` (sözleşmedeki ilk altı satır, sırası sabit) + anında
-    /// not ve kalınan sayfa + API sunucusu. `api_gercek`: `configs.edn`deki `:server/autostart`.
+    /// not ve kalınan sayfa + API sunucusu + en sonda `dil` (sözleşmeye yalnız eklenir).
+    /// `api_gercek`: `configs.edn`deki `:server/autostart`.
     /// `api_otomatik_baslat` istenen değeri gösterir (bekleyen varsa o); `api_otomatik_bekleyen`
     /// bekleyen varsa `evet`/`hayir`, yoksa boştur (Logseq kapanınca uygulanır).
     pub fn satirlar_tam(&self, baslangicta: bool, api_gercek: bool) -> String {
         let mut s = self.satirlar(baslangicta);
-        for (a, d) in self.cifler().iter().skip(ESKI_CIFT_SAYISI) {
+        let ciftler = self.cifler();
+        let son = ciftler.len() - 1;
+        for (a, d) in &ciftler[ESKI_CIFT_SAYISI..son] {
             s.push_str(&format!("{a}={d}\n"));
         }
         s.push_str(&format!(
-            "api_otomatik_baslat={}\napi_otomatik_bekleyen={}\n",
+            "api_otomatik_baslat={}\napi_otomatik_bekleyen={}\n{}={}\n",
             ev(self.api_bekleyen.unwrap_or(api_gercek)),
-            self.api_bekleyen.map_or("", ev)
+            self.api_bekleyen.map_or("", ev),
+            ciftler[son].0,
+            ciftler[son].1
         ));
         s
     }
@@ -329,10 +345,11 @@ impl Ayarlar {
                 _ => return Err(format!("{anahtar}: dizge olmalı")),
             };
             if anahtar == "api_bekleyen" {
-                ayarlar.api_bekleyen = Some(iki_secenek(anahtar, &metin, "evet", "hayir")?);
+                let b = iki_secenek(anahtar, &metin, "evet", "hayir").map_err(|e| e.to_string())?;
+                ayarlar.api_bekleyen = Some(b);
                 continue;
             }
-            ayarlar.uygula(&AyarDegeri::coz(anahtar, &metin)?);
+            ayarlar.uygula(&AyarDegeri::coz(anahtar, &metin).map_err(|e| e.to_string())?);
         }
         Ok((ayarlar, uyarilar))
     }
@@ -470,6 +487,7 @@ pub fn ayarla(a: Ayarlar) {
 #[cfg(test)]
 mod testler {
     use super::*;
+    use logseq_tepsi_metin::Dil;
 
     fn gecici(ad: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("logseq-tepsi-ayar-{ad}-{}", std::process::id()));
@@ -779,7 +797,7 @@ mod testler {
         let a = Ayarlar::default(); // göster/gizle Ctrl+Alt+L, not Ctrl+Alt+N
         assert!(!a.kisayollar_cakisiyor());
         let ayni = satirlari_coz("kisayol_not=ctrl+alt+l").unwrap();
-        let e = cakisma_denetle(&a, &ayni).unwrap_err();
+        let e = cakisma_denetle(&a, &ayni).unwrap_err().yaz(Dil::Tr);
         assert!(
             e.contains("aynı kısayol") && e.contains("Ctrl+Alt+L"),
             "{e}"
@@ -845,12 +863,13 @@ mod testler {
         assert_eq!(
             &tam[a.satirlar(false).len()..],
             "kisayol_not=Ctrl+Alt+N\nnot_hedefi=gunluk\nkalinan_sayfa=evet\n\
-             api_otomatik_baslat=hayir\napi_otomatik_bekleyen=\n"
+             api_otomatik_baslat=hayir\napi_otomatik_bekleyen=\ndil=otomatik\n",
+            "`dil` sözleşmeye yalnız eklenir: en sonda, öncekilerin sırası değişmez"
         );
         // Gerçek değer evet, bekleyen yok.
         assert!(a
             .satirlar_tam(false, true)
-            .ends_with("api_otomatik_baslat=evet\napi_otomatik_bekleyen=\n"));
+            .ends_with("api_otomatik_baslat=evet\napi_otomatik_bekleyen=\ndil=otomatik\n"));
         // Bekleyen varsa istenen değer ve bekleyen satırı görünür.
         let b = Ayarlar {
             api_bekleyen: Some(true),
@@ -862,7 +881,7 @@ mod testler {
         let s = b.satirlar_tam(true, false);
         assert!(s.ends_with(
             "kisayol_not=\nnot_hedefi=yeni_sayfa\nkalinan_sayfa=hayir\n\
-             api_otomatik_baslat=evet\napi_otomatik_bekleyen=evet\n"
+             api_otomatik_baslat=evet\napi_otomatik_bekleyen=evet\ndil=otomatik\n"
         ));
     }
 
@@ -944,5 +963,112 @@ mod testler {
         ] {
             assert!(Ayarlar::toml_coz(kotu).is_err(), "{kotu:?}");
         }
+    }
+
+    #[test]
+    fn dil_anahtari_dogrulanir_buyuk_kucuk_harf_duyarsiz() {
+        for (deger, beklenen) in [
+            ("otomatik", DilTercihi::Otomatik),
+            ("tr", DilTercihi::Tr),
+            ("en", DilTercihi::En),
+            ("EN", DilTercihi::En),
+            ("Tr", DilTercihi::Tr),
+        ] {
+            assert_eq!(
+                AyarDegeri::coz("dil", deger),
+                Ok(AyarDegeri::Dil(beklenen)),
+                "{deger}"
+            );
+        }
+        for kotu in ["", "de", "türkçe", "tr-TR", "evet"] {
+            assert!(AyarDegeri::coz("dil", kotu).is_err(), "{kotu:?}");
+        }
+        let e = AyarDegeri::coz("dil", "de").unwrap_err();
+        assert_eq!(e.yaz(Dil::Tr), "dil: otomatik, tr ya da en olmalı: de");
+        assert_eq!(e.yaz(Dil::En), "dil: must be otomatik, tr or en: de");
+    }
+
+    #[test]
+    fn dil_ayari_post_get_ve_toml_yolunda() {
+        let mut a = Ayarlar::default();
+        assert_eq!(a.dil, DilTercihi::Otomatik, "varsayılan otomatik");
+        for d in satirlari_coz("dil=en").unwrap() {
+            a.uygula(&d);
+        }
+        assert_eq!(a.dil, DilTercihi::En);
+        // GET: tek `dil=` satırı, en sonda.
+        let tam = a.satirlar_tam(false, false);
+        assert!(tam.ends_with("api_otomatik_bekleyen=\ndil=en\n"), "{tam}");
+        assert_eq!(tam.matches("dil=").count(), 1);
+        // Eski (kısa) GET gövdesi `dil` taşımaz.
+        assert!(!a.satirlar(false).contains("dil="));
+        // Dosya: yazılır, geri okunur, tanınmayan anahtar uyarısı yok; eski dosya otomatik.
+        assert!(a.toml_metni().contains("dil = \"en\""));
+        let (b, uyari) = Ayarlar::toml_coz(&a.toml_metni()).unwrap();
+        assert_eq!(a, b);
+        assert!(uyari.is_empty(), "{uyari:?}");
+        assert!(Ayarlar::default()
+            .toml_metni()
+            .contains("dil = \"otomatik\""));
+        let (eski, _) = Ayarlar::toml_coz("tik = \"cift\"\n").unwrap();
+        assert_eq!(eski.dil, DilTercihi::Otomatik);
+        for kotu in ["dil = \"de\"", "dil = 3", "dil = \"\""] {
+            assert!(Ayarlar::toml_coz(kotu).is_err(), "{kotu:?}");
+        }
+        // Birlikte gövde: biri geçersizse hiçbiri uygulanmaz (400).
+        assert_eq!(
+            satirlari_coz("tik=cift\ndil=TR").unwrap(),
+            vec![AyarDegeri::Tik(Tik::Cift), AyarDegeri::Dil(DilTercihi::Tr)]
+        );
+        assert!(satirlari_coz("tik=cift\ndil=de").is_err());
+    }
+
+    #[test]
+    fn dil_dosyada_kaydedilir_yuklenir() {
+        let d = gecici("dil");
+        let a = Ayarlar {
+            dil: DilTercihi::Tr,
+            ..Ayarlar::default()
+        };
+        kaydet(&d, &a).unwrap();
+        let y = yukle(&d);
+        assert_eq!(y.ayarlar.dil, DilTercihi::Tr);
+        assert!(y.kayitlar.is_empty(), "{:?}", y.kayitlar);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn hata_nedenleri_etkin_dile_gore_yazilir() {
+        let tr_en = |g: &str, tr: &str, en: &str| {
+            let e = satirlari_coz(g).unwrap_err();
+            assert_eq!(e.yaz(Dil::Tr), tr, "{g}");
+            assert_eq!(e.yaz(Dil::En), en, "{g}");
+        };
+        tr_en(
+            "bilinmeyen=1",
+            "bilinmeyen anahtar: bilinmeyen",
+            "unknown key: bilinmeyen",
+        );
+        tr_en(
+            "tik=uc",
+            "tik: tek ya da cift olmalı: uc",
+            "tik: must be tek or cift: uc",
+        );
+        tr_en(
+            "kisayol_not=Ctrl+Foo",
+            "kisayol_not: bilinmeyen tuş: Foo",
+            "kisayol_not: unknown key: Foo",
+        );
+        tr_en("", "ayar satırı yok", "no setting lines");
+        tr_en("tik", "satırda '=' yok: tik", "no '=' in line: tik");
+        let ayni = satirlari_coz("kisayol_not=ctrl+alt+l").unwrap();
+        let e = cakisma_denetle(&Ayarlar::default(), &ayni).unwrap_err();
+        assert_eq!(
+            e.yaz(Dil::En),
+            "kisayol_goster_gizle and kisayol_not cannot be the same shortcut: Ctrl+Alt+L"
+        );
+        // Dosya (günlük) hataları Türkçe kalır.
+        let neden = Ayarlar::toml_coz("tik = \"uc\"").unwrap_err();
+        assert!(neden.contains("olmalı"), "{neden}");
     }
 }

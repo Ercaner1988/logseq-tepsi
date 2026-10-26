@@ -2,6 +2,8 @@
 //! bayrakları ve sanal tuş kodu. Yalnız ASCII; Türkçe harf karşılaştırması yapılmaz (çıplak
 //! `to_lowercase` kullanılmaz, `eq_ignore_ascii_case` yeter). Win32 çağrısı ikili crate'te.
 
+use logseq_tepsi_metin::{Mesaj, Metin};
+
 pub const MOD_ALT: u32 = 0x1;
 pub const MOD_CONTROL: u32 = 0x2;
 pub const MOD_SHIFT: u32 = 0x4;
@@ -81,29 +83,29 @@ fn tus_coz(ad: &str) -> Option<u32> {
 
 /// `"Ctrl+Alt+L"`, `"Ctrl+Shift+F12"` (büyük/küçük harf duyarsız, ASCII). En az bir değiştirici
 /// gerekir; Shift tek başına yalnız F tuşlarıyla kabul edilir (yoksa yazı yazmayı engellerdi).
-pub fn ayristir(metin: &str) -> Result<Kisayol, String> {
+pub fn ayristir(metin: &str) -> Result<Kisayol, Mesaj> {
     if !metin.is_ascii() {
-        return Err(format!("kısayol yalnız ASCII olabilir: {metin}"));
+        return Err(Mesaj::yeni(Metin::HataKisayolAscii).arg(metin));
     }
     let parcalar: Vec<&str> = metin.split('+').map(str::trim).collect();
-    let (tus_adi, onlar) = parcalar.split_last().ok_or("kısayol boş")?;
+    let (tus_adi, onlar) = parcalar
+        .split_last()
+        .ok_or_else(|| Mesaj::yeni(Metin::HataKisayolBos))?;
     if tus_adi.is_empty() || onlar.iter().any(|p| p.is_empty()) {
-        return Err(format!("kısayol biçimi bozuk: {metin}"));
+        return Err(Mesaj::yeni(Metin::HataKisayolBicim).arg(metin));
     }
     let mut degistiriciler = 0;
     for ad in onlar {
-        let b = degistirici_coz(ad).ok_or_else(|| format!("bilinmeyen değiştirici: {ad}"))?;
+        let b = degistirici_coz(ad).ok_or_else(|| Mesaj::yeni(Metin::HataDegistirici).arg(*ad))?;
         if degistiriciler & b != 0 {
-            return Err(format!("değiştirici yinelendi: {ad}"));
+            return Err(Mesaj::yeni(Metin::HataDegistiriciYinelendi).arg(*ad));
         }
         degistiriciler |= b;
     }
-    let tus = tus_coz(tus_adi).ok_or_else(|| format!("bilinmeyen tuş: {tus_adi}"))?;
+    let tus = tus_coz(tus_adi).ok_or_else(|| Mesaj::yeni(Metin::HataTus).arg(*tus_adi))?;
     let kalici = degistiriciler & !MOD_SHIFT != 0;
     if !kalici && (degistiriciler == 0 || f_tusu(tus_adi).is_none()) {
-        return Err(format!(
-            "kısayol Ctrl, Alt ya da Win içermeli (Shift tek başına yalnız F tuşuyla): {metin}"
-        ));
+        return Err(Mesaj::yeni(Metin::HataKisayolGerekli).arg(metin));
     }
     Ok(Kisayol {
         degistiriciler,
@@ -186,6 +188,7 @@ pub fn plan(
 #[cfg(test)]
 mod testler {
     use super::*;
+    use logseq_tepsi_metin::Dil;
 
     fn k(d: u32, t: u32) -> Kisayol {
         Kisayol {
@@ -225,7 +228,8 @@ mod testler {
             "Çtrl+L",
         ] {
             let e = ayristir(s).unwrap_err();
-            assert!(e.contains("ASCII"), "{s}: {e}");
+            assert_eq!(e.metin, Metin::HataKisayolAscii, "{s}");
+            assert!(e.yaz(Dil::En).contains("ASCII"), "{s}");
         }
     }
 
