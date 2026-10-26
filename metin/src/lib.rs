@@ -182,7 +182,8 @@ mod testler {
     /// tabloyla aynı olmalı, her varyant kendi sırasında durmalı.
     #[test]
     fn tumu_tablosu_eksiksiz_ve_sirali() {
-        let kaynak = include_str!("metinler.rs");
+        // Windows checkout (core.autocrlf) dosyayı CRLF ile getirir; sayım satır sonundan bağımsız olsun.
+        let kaynak = include_str!("metinler.rs").replace("\r\n", "\n");
         let govde = kaynak
             .split("pub enum Metin {")
             .nth(1)
