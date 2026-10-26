@@ -190,9 +190,16 @@ function arayuzuKaydet(): void {
 }
 
 /** Logseq'in arayüz dili (`preferredLanguage`); okunamazsa undefined (karar işlevi İngilizceye düşer). */
+/** Logseq yanıt vermezse komutlar kayıtsız kalmasın: kısa süre sonra dil bilinmiyor sayılır. */
+const LOGSEQ_DILI_ZAMAN_ASIMI_MS = 3000;
+
 async function logseqDili(): Promise<unknown> {
   try {
-    return (await logseq.App.getUserConfigs())?.preferredLanguage;
+    const zamanAsimi = new Promise<undefined>((coz) =>
+      setTimeout(() => coz(undefined), LOGSEQ_DILI_ZAMAN_ASIMI_MS),
+    );
+    const ayarlar = await Promise.race([logseq.App.getUserConfigs(), zamanAsimi]);
+    return ayarlar?.preferredLanguage;
   } catch {
     return undefined;
   }
@@ -206,10 +213,10 @@ async function dilUygula(): Promise<void> {
   const ayar = logseq.settings?.dil;
   const dil = dilKarar(ayar, ayar === "tr" || ayar === "en" ? undefined : await logseqDili());
   if (dil === uygulananDil) return;
-  uygulananDil = dil;
   dilKur(dil); // bildirimler bu andan itibaren yeni dilde
   document.documentElement.lang = dil;
   arayuzuKaydet();
+  uygulananDil = dil; // kayıt hata fırlatırsa aynı dil bir sonraki olayda yeniden denenir
 }
 
 /** Ardışık ayar olayları sırayla işlenir (yarış olmasın). */

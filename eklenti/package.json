@@ -1,6 +1,6 @@
 {
   "name": "logseq-tepsi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen logseq-tepsi aracını Logseq içinden yönetir.",
   "license": "MIT",
   "repository": {

@@ -188,7 +188,7 @@ const TR: Metinler = {
     dil: {
       baslik: "Dil / Language (araç)",
       aciklama:
-        "otomatik: Logseq'in arayüz dilini izler (Türkçeyse Türkçe, değilse English). tr: Türkçe. en: English. " +
+        "otomatik: eklenti Logseq'in arayüz dilini, tepsi aracı Windows görüntü dilini izler (Türkçeyse Türkçe, değilse English). tr: Türkçe. en: English. " +
         "Komut paleti etiketleri ile bu ayar sayfası dil değişince yeniden kaydedilir; açık bir ayar penceresi varsa kapatıp açın.",
     },
   },
@@ -300,7 +300,7 @@ const EN: Metinler = {
       baslik: "Start Logseq hidden at sign-in (tool)",
       aciklama:
         "When the tool starts from its startup shortcut at boot, it starts Logseq and hides it to the tray. " +
-        "The shortcut is written by `logseq-tepsi kur` (or Start with the computer in the menu).",
+        "The shortcut is written by `logseq-tepsi kur` (or Start with Windows in the tray menu).",
     },
     baslangictaCalis: {
       baslik: "Start the tool with the computer (tool)",
@@ -331,7 +331,7 @@ const EN: Metinler = {
     dil: {
       baslik: "Dil / Language (tool)",
       aciklama:
-        "otomatik: follows Logseq's interface language (Türkçe if Turkish, otherwise English). tr: Türkçe. en: English. " +
+        "otomatik: the plugin follows Logseq's interface language, the tray tool follows the Windows display language (Türkçe if Turkish, otherwise English). tr: Türkçe. en: English. " +
         "Command palette labels and this settings page are re-registered when the language changes; if a settings window is open, close and reopen it.",
     },
   },

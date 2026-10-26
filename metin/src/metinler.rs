@@ -317,7 +317,7 @@ fn en(m: Metin) -> &'static str {
         Metin::MenuGoster => "Show",
         Metin::MenuHepsiniGoster => "Show all",
         Metin::MenuTepsiyeGizle => "Hide to tray",
-        Metin::MenuCikis => "Exit",
+        Metin::MenuCikis => "Quit Logseq",
         Metin::MenuAraciKapat => "Close tray tool",
         Metin::MenuAnindaNot => "Quick note",
         Metin::MenuApiDurdur => "Stop API server (experimental, running)",
@@ -391,12 +391,12 @@ fn en(m: Metin) -> &'static str {
         Metin::HataKisayolAyni => {
             "kisayol_goster_gizle and kisayol_not cannot be the same shortcut: {}"
         }
-        Metin::HataKisayolAscii => "shortcut may contain ASCII only: {}",
+        Metin::HataKisayolAscii => "shortcut must be ASCII only: {}",
         Metin::HataKisayolBos => "shortcut is empty",
         Metin::HataKisayolBicim => "malformed shortcut: {}",
         Metin::HataDegistirici => "unknown modifier: {}",
         Metin::HataDegistiriciYinelendi => "duplicate modifier: {}",
-        Metin::HataTus => "unknown key: {}",
+        Metin::HataTus => "unknown keyboard key: {}",
         Metin::HataKisayolGerekli => {
             "shortcut must include Ctrl, Alt or Win (Shift alone only with an F key): {}"
         }

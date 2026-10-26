@@ -136,7 +136,7 @@ export async function durumAl(sec?: Secenekler): Promise<Sonuc<Durum>> {
   if (!s.ok) return s;
   const durum = durumAyristir(s.deger.govde);
   if (!durum) {
-    return { ok: false, hata: { tur: "beklenmedik", ayrinti: "/durum: unparseable response" } };
+    return { ok: false, hata: { tur: "beklenmedik", ayrinti: "/durum" } };
   }
   return { ok: true, deger: durum };
 }
@@ -166,7 +166,7 @@ export async function ayarAl(sec?: Secenekler): Promise<Sonuc<Record<string, str
   if (!s.ok) return s;
   const ayar = ayarAyristir(s.deger.govde);
   if (!ayar) {
-    return { ok: false, hata: { tur: "beklenmedik", ayrinti: "/ayar: unparseable response" } };
+    return { ok: false, hata: { tur: "beklenmedik", ayrinti: "/ayar" } };
   }
   return { ok: true, deger: ayar };
 }

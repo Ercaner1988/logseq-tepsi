@@ -253,7 +253,8 @@ describe("dil ayarı: araç eşlemesi", () => {
   test("kullanıcı dili değiştirince dil=değer araca gider; araçtan gelen eşitleme geri gitmez", () => {
     const eski = { ...VARSAYILANLAR };
     const yeni = { ...VARSAYILANLAR, dil: "en" };
-    expect(degisenSatirlar(yeni, eski, null)).toEqual(["dil=en"]);
+    // Araç henüz okunmadıysa (eski sürüm olabilir) dil gönderilmez.
+    expect(degisenSatirlar(yeni, eski, null)).toEqual([]);
     expect(degisenSatirlar(yeni, eski, { dil: "otomatik" })).toEqual(["dil=en"]);
     expect(degisenSatirlar(yeni, eski, { dil: "en" })).toEqual([]);
     expect(satirlariIsle({ dil: "otomatik" }, ["dil=en"])).toEqual({ dil: "en" });

@@ -156,8 +156,9 @@ export function degisenSatirlar(
     const once = aracDegeri(t, eski?.[t.eklenti]);
     if (simdi === once) continue;
     if (bilinen !== null && bilinen[t.arac] === simdi) continue;
-    // Araç bu anahtarı bilmiyor (eski sürüm): ayar yalnız eklentide kalır.
-    if (t.istegeBagli && bilinen !== null && !(t.arac in bilinen)) continue;
+    // Araç bu anahtarı bilmiyor (eski sürüm) ya da henüz okunmadı: ayar yalnız eklentide kalır,
+    // ilk başarılı GET /ayar eşitler.
+    if (t.istegeBagli && (bilinen === null || !(t.arac in bilinen))) continue;
     satirlar.push(`${t.arac}=${simdi}`);
   }
   return satirlar;

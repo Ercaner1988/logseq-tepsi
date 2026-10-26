@@ -2,7 +2,7 @@
 
 Logseq penceresini Windows bildirim alanına (tepsiye) gizleyen [logseq-tepsi](../README.md) aracını Logseq'in içinden yönetir. Eklenti pencereyi kendisi gizleyemez (eklentiler bir iframe içinde çalışır); aracın yerel ucuna (`127.0.0.1`) istek atar.
 
-> **English.** Controls the [logseq-tepsi](https://github.com/Ercaner1988/logseq-tepsi) Windows tray tool from inside Logseq: a toolbar button and command to hide Logseq to the system tray, tool status, quick note into today's journal or a new page, reopening the last visited page on startup, and the tool's settings mirrored in the plugin settings. Requires the tray tool (`logseq-tepsi.exe`, Windows) from the repository's Releases; without it the plugin loads and only shows a warning. The UI is available in English and Turkish (follows Logseq's language by default). Documentation is in Turkish.
+> **English.** Controls the [logseq-tepsi](https://github.com/Ercaner1988/logseq-tepsi) Windows tray tool from inside Logseq: a toolbar button and command to hide Logseq to the system tray, tool status, quick note into today's journal or a new page, reopening the last visited page on startup, and the tool's settings mirrored in the plugin settings. Requires the tray tool (`logseq-tepsi.exe`, Windows) from the repository's Releases; without it the plugin loads and only shows a warning. The UI is available in English and Turkish (by default the plugin follows Logseq's language and the tray tool follows the Windows display language). Documentation is in Turkish.
 
 ![Tepsi menüsü ve Ayarlar alt menüsü](https://raw.githubusercontent.com/Ercaner1988/logseq-tepsi/main/docs/gorsel/tepsi-menusu.png)
 
@@ -74,7 +74,7 @@ Logseq, sabitlenmiş eklenti düğmesi bir kez bile seçilmişse yalnızca sabit
 
 ## Dil (Türkçe / English)
 
-Etkin dil `dil` ayarından çıkar (`src/metin.ts`, saf `dilKarar`): `tr` ya da `en` seçiliyse o; `otomatik`te Logseq'in arayüz dili (`logseq.App.getUserConfigs()` içindeki `preferredLanguage`; `tr` ile başlıyorsa Türkçe, değilse ya da okunamazsa English). `dil` ayarı tepsi aracıyla da eşitlenir (`GET/POST /ayar`, anahtar `dil`, değerler `otomatik`, `tr`, `en`). Eski araç sürümleri `dil` satırı döndürmez: bu hata değildir, ayar yalnız eklentide yaşar ve araca gönderilmez (eski araç bilinmeyen anahtarı reddederdi); etkin dil yine ayardan ya da Logseq'in dilinden çıkar. Araç `400` ile ayar reddederse gösterilen neden aracın kendi diliyle gelir, eklenti çevirmez.
+Etkin dil `dil` ayarından çıkar (`src/metin.ts`, saf `dilKarar`): `tr` ya da `en` seçiliyse o; `otomatik`te Logseq'in arayüz dili (`logseq.App.getUserConfigs()` içindeki `preferredLanguage`; `tr` ile başlıyorsa Türkçe, değilse ya da okunamazsa English). `dil` ayarı tepsi aracıyla da eşitlenir (`GET/POST /ayar`, anahtar `dil`, değerler `otomatik`, `tr`, `en`). Eski araç sürümleri `dil` satırı döndürmez: bu hata değildir, ayar yalnız eklentide yaşar ve araca gönderilmez (eski araç bilinmeyen anahtarı reddederdi; araç henüz okunamadıysa da gönderilmez, ilk başarılı `GET /ayar` eşitler); etkin dil yine ayardan ya da Logseq'in dilinden çıkar. Araç `400` ile ayar reddederse gösterilen neden aracın kendi diliyle gelir, eklenti çevirmez.
 
 Dil değişince ne zaman yenilenir (Logseq 2.0.2 asar'ı okunarak ve eklenti kitaplığı koduyla; **canlı Logseq'te denenmedi**):
 

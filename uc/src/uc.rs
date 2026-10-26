@@ -1050,7 +1050,10 @@ mod testler {
             ("x=1", "unknown key: x"),
             ("", "no setting lines"),
             ("tik", "no '=' in line: tik"),
-            ("kisayol_not=Ctrl+Foo", "kisayol_not: unknown key: Foo"),
+            (
+                "kisayol_not=Ctrl+Foo",
+                "kisayol_not: unknown keyboard key: Foo",
+            ),
         ] {
             let r = ayar_post_dilli(govde, Dil::En);
             assert_eq!(r.kod, 400, "{govde:?}");

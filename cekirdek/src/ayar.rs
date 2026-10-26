@@ -1057,7 +1057,7 @@ mod testler {
         tr_en(
             "kisayol_not=Ctrl+Foo",
             "kisayol_not: bilinmeyen tuş: Foo",
-            "kisayol_not: unknown key: Foo",
+            "kisayol_not: unknown keyboard key: Foo",
         );
         tr_en("", "ayar satırı yok", "no setting lines");
         tr_en("tik", "satırda '=' yok: tik", "no '=' in line: tik");
