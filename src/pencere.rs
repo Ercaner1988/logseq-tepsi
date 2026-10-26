@@ -313,9 +313,16 @@ pub fn tikla() {
 /// Simge tıkı: `kapaliyken_ac = false` iken Logseq kapalıysa hiçbir şey yapmaz
 /// (`kapaliyken_tik_acar = hayir`).
 pub fn tikla_ayarli(kapaliyken_ac: bool) {
-    let p = ana_pencereler();
-    if let Some(t) = davranis::tik_toplu_ayarli(mantik::tikla_toplu(&p, &kume()), kapaliyken_ac) {
-        toplu_uygula(t);
+    tikla_uygula(&ana_pencereler(), kapaliyken_ac, toplu_uygula);
+}
+
+/// Küme kilidi kararla birlikte bırakılır, `uygula` kilitsiz çağrılır: `gizle`/`goster` kümeyi
+/// yeniden kilitler. (Edition 2021'de `if let` koşulundaki geçici kilit bloğun sonuna dek
+/// yaşar; kısayolla gizle/göster ileti döngüsünü kilitliyordu.)
+fn tikla_uygula(p: &[(isize, PencereDurumu)], kapaliyken_ac: bool, uygula: impl FnOnce(Toplu)) {
+    let t = mantik::tikla_toplu(p, &kume());
+    if let Some(t) = davranis::tik_toplu_ayarli(t, kapaliyken_ac) {
+        uygula(t);
     }
 }
 
@@ -454,4 +461,25 @@ pub fn gorunur_ana_sayisi() -> usize {
 /// Tepsi simgesinin menüsünde "Hepsini göster" öğesinin etkinliği için gizli sayısı.
 pub fn gizli_sayisi() -> usize {
     kume().len()
+}
+
+#[cfg(test)]
+mod testler {
+    use super::*;
+
+    /// Gerileme: tık kararı uygulanırken küme kilidi tutulmamalı (`gizle`/`goster` yeniden kilitler).
+    #[test]
+    fn tik_uygulanirken_kume_kilitli_degil() {
+        let gorunur = PencereDurumu {
+            gorunur: true,
+            simge_durumunda: false,
+        };
+        let mut cagrildi = false;
+        tikla_uygula(&[(0x5A5A, gorunur)], true, |t| {
+            cagrildi = true;
+            assert!(matches!(t, Toplu::Gizle(_)), "görünür pencere gizlenmeli");
+            assert!(GIZLI.try_lock().is_ok(), "küme kilidi uygulama sırasında tutuluyor");
+        });
+        assert!(cagrildi);
+    }
 }
