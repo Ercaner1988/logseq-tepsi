@@ -4,7 +4,7 @@ default-members = [".", "cekirdek", "kisayol", "uc", "sistem", "logseq", "metin"
 
 [package]
 name = "logseq-tepsi"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 publish = false
 description = "Logseq masaüstü uygulamasını küçültünce sistem tepsisine gizleyen küçük Windows aracı."
